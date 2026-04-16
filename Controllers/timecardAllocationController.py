@@ -1,43 +1,8 @@
 import pandas as pd
 import pyodbc
 from datetime import datetime
-from Employee import *
-
-# --------------------------
-# Database connection
-# --------------------------
-def get_connection():
-    return pyodbc.connect(
-        'DRIVER={ODBC Driver 17 for SQL Server};SERVER=CRT-SQL;DATABASE=PARS;Trusted_Connection=yes;'
-    )
-
-# --------------------------
-# Helper functions
-# --------------------------
-def load_table(table_name):
-    conn = get_connection()
-    query = f"SELECT * FROM [{table_name}]"
-    df = pd.read_sql(query, conn)
-    conn.close()
-    return df
-
-def run_query(conn, query, params=None):
-    try:
-        cursor = conn.cursor()
-        cursor.execute(query, params or [])
-        
-        # Only fetch results if it's a SELECT query
-        if cursor.description is not None:
-            columns = [col[0] for col in cursor.description]
-            rows = cursor.fetchall()
-            return pd.DataFrame.from_records(rows, columns=columns)
-        else:
-            conn.commit()  # commit for INSERT/UPDATE/DELETE
-            return None
-            
-    except Exception as e:
-        
-        return None
+from Classes import *
+from Controllers.DB import * 
 
 def getPayPeriods(conn):
     """
@@ -109,11 +74,6 @@ def importTimeCards(df, conn):
     return existing_records
 
 
-def group_df(df, colName):
-    groups = df.groupby(colName)
-    return groups
-
-
 def createTimeCard(payPeriod, EmployeeCode, TimeCardID, Approved, conn):
     """
     Make an unexisting time card
@@ -145,26 +105,20 @@ def getEmployeesByPayPeriod(conn, pay_period, user):
     Get employees that have time cards for a given pay period
     """
 
-    #testing this will eventaully be a management tool 
-    
-    if user['email'].lower() == 'mapheyp@crtct.org':
-        return setLoggedInUser(conn, user)
+    #Determine The Employees that are under an individual
     parts = pay_period.split("/")
     period = f"{parts[2]}{parts[0]}{parts[1]}"
     
     df = run_query(conn, """
-        SELECT DISTINCT *
-        FROM dbo.EmployeeInformation as E 
-        LEFT JOIN dbo.Time_Card as T ON T.EmployeeCode = E.EmployeeCode 
-        WHERE T.PayPeriod = ?
-    """, [period])
-
+        SELECT * FROM dbo.fn_GetEmployeesByManagerEmail(?, ?);
+    """, [user['email'], period])
     return [Employee(
         row["EmployeeCode"],
         row["EmployeeLast"],
         row["EmployeeFirst"],
         row["DepartmentCode"],
-        row["WorkEmail"]
+        row["WorkEmail"],
+        "N/A"
     ) for _, row in df.iterrows()]
 
 
@@ -184,7 +138,7 @@ def getFundsByEmployee(conn, employee_code):
     df = run_query(conn, """
         SELECT DISTINCT F.FundCode, F.FundDescription 
         FROM Funds AS F 
-        LEFT JOIN EmployeFundMatch AS E ON F.FundCode = E.Fund_Code 
+        LEFT JOIN EmployeeFundMatch AS E ON F.FundCode = E.Fund_Code 
         WHERE E.EE_Code = ?
     """, [employee_code])
     return (df["FundCode"] + ":" + df["FundDescription"]).tolist()
@@ -248,18 +202,25 @@ def deleteRecord(conn, recordID):
         [f"%{recordID}%"]
     )
 
-def setLoggedInUser(conn, user):
-    """
-    Set Main App Full User 
-    """
-    df = run_query(conn, """
-    Select * From EmployeeInformation Where lower(WorkEmail) = lower(?)
-    """, [user['email']]
-    )
-    return [Employee(
-        row["EmployeeCode"],
-        row["EmployeeLast"],
-        row["EmployeeFirst"],
-        row["DepartmentCode"],
-        row["WorkEmail"]
-    ) for _, row in df.iterrows()]
+def approveTimecard(emplyeeCode, approverCode,  payPeriod, conn, approval):
+    #Determine The Employees that are under an individual
+    parts = payPeriod.split("/")
+    period = f"{parts[2]}{parts[0]}{parts[1]}"
+    timeCardID = f'TCARD{emplyeeCode}{period}'
+    run_query(conn, """
+    UPDATE Time_Card
+    SET Approval = ? , ApprovedBy = ? , ApprovedDate = ?
+    WHERE TimeCardID = ?
+    """,[approval,approverCode , datetime.today().strftime('%Y-%m-%d') , timeCardID]
+              )
+    
+
+def checkApproval(emplyeeCode, payPeriod, conn):
+    #Determine The Employees that are under an individual
+    
+    parts = payPeriod.split("/")
+    period = f"{parts[2]}{parts[0]}{parts[1]}"
+    timeCardID = f'TCARD{emplyeeCode}{period}'
+    df = run_query(conn, """Select Approval From Time_Card Where TimeCardID = ?""",[timeCardID])
+    
+    return int(df.iloc[0,0]) != 0

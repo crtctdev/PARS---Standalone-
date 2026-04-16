@@ -1,0 +1,75 @@
+﻿DepartmentCode,ReportTo,Description
+NUTRIT,A1BY,Nutrition
+NUTRIT,A1NC,Nutrition
+MEADOW,A1GQ,Meadows
+FACILT,A01S,Facilities
+FINANC,A0OJ,Finance
+FACILT,A1Q0,Facilities
+SUPHOU,A0R2,Supportive Housing
+WEATHR,A01J,Weatherization
+DELIVR,A1BY,Delivery
+EXECUT,A1GQ,Executive
+SHELTR,A17A,Shelter Services
+ENERGY,A1VY,Energy
+ECEDUC,A1W0,Early Childcare and Education
+ECESUP,A0ZI,Support Services
+CMSRVA,A1A8,Community Svc and Veteran Affairs
+QUALTY,A0WM,Quality Assurance
+HOUCOM,A16B,Housing and Community Services
+FINANC,A1X6,Finance
+MIDSEX,A12F,Middlesex Services
+ECEDUC,A0KN,Early Childcare and Education
+PLANIG,A1GQ,Planning
+CLNSRV,A1GQ,Clinical Services
+ECESUP,A1GQ,Support Services
+CLNSRV,A0WK,Clinical Services
+COMSVC,A01J,Community Services
+RETRET,A1TD,Retreat / RSVP
+ENERGY,A12F,Energy
+HOUSHL,A1A8,Housing and Shelter Services
+SHELTR,A038,Shelter Services
+MIDADM,A16B,Middlesex Admin
+CLNSRV,A0XH,Clinical Services
+PLANIG,A0WM,Planning
+RETRET,A1I7,Retreat / RSVP
+RETRET,#N/A,Retreat / RSVP
+RETRET,A1JY,Retreat / RSVP
+QUALTY,A0VR,Quality Assurance
+RETRET,A0WK,Retreat / RSVP
+RETRET,A11S,Retreat / RSVP
+SUPHOU,A17A,Supportive Housing
+ENERGY,A0H9,Energy
+MEADOW,A01S,Meadows
+CONGRE,A1BY,Congregate
+CLNSRV,A13R,Clinical Services
+RETRET,A1UZ,Retreat / RSVP
+SUBECE,A1W0,Sub for ECE
+SHELTR,A1R2,Shelter Services
+ENERGY,A0IJ,Energy
+VETAFF,A01J,Veteran Affairs
+VETAFF,A0SW,Veteran Affairs
+FINANC,A1GQ,Finance
+HUMRES,A1GQ,Human Resources
+CLNSRV,A1PM,Clinical Services
+CLNSRV,A1GG,Clinical Services
+OPERAT,A01S,Operations
+WEATHR,A0GV,Weatherization
+CLNSRV,A0LH,Clinical Services
+ENERGY,A0NN,Energy
+ITADMN,A16B,Information Technology Admin
+SHELTR,A13U,Shelter Services
+ECESUP,A1W0,Support Services
+CLNSRV,A1CV,Clinical Services
+NUTRIT,A1GQ,Nutrition
+CLNSRV,A0PL,Clinical Services
+HUMRES,A0WK,Human Resources
+SUBECE,A0KN,Sub for ECE
+ENEADM,A1A8,Energy Admin - Inactive
+CLNSRV,A1Z6,Clinical Services
+CLNSRV,A1Y0,Clinical Services
+CLNSRV,A1RA,Clinical Services
+SUPHOU,A0HH,Supportive Housing
+INTECH,A1P2,Information Technology
+MIDADM,A12F,Middlesex Admin
+COMSVC,A0F7,Community Services
+PLANIG,A12R,Planning
