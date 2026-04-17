@@ -202,25 +202,34 @@ def deleteRecord(conn, recordID):
         [f"%{recordID}%"]
     )
 
-def approveTimecard(emplyeeCode, approverCode,  payPeriod, conn, approval):
+def changeTimecardState(emplyeeCode, approverCode,  payPeriod, conn, approval, acknowledged):
     #Determine The Employees that are under an individual
     parts = payPeriod.split("/")
     period = f"{parts[2]}{parts[0]}{parts[1]}"
     timeCardID = f'TCARD{emplyeeCode}{period}'
+    today = datetime.today().strftime('%Y-%m-%d') 
     run_query(conn, """
     UPDATE Time_Card
-    SET Approval = ? , ApprovedBy = ? , ApprovedDate = ?
+    SET Approval = ? , ApprovedBy = ? , ApprovedDate = ? , Acknowledged = ? , AcknowledgedDate = ? 
     WHERE TimeCardID = ?
-    """,[approval,approverCode , datetime.today().strftime('%Y-%m-%d') , timeCardID]
+    """,[approval,approverCode , today , acknowledged, today ,timeCardID]
               )
-    
 
-def checkApproval(emplyeeCode, payPeriod, conn):
-    #Determine The Employees that are under an individual
-    
+def checkState(employeeCode, payPeriod, conn):
     parts = payPeriod.split("/")
     period = f"{parts[2]}{parts[0]}{parts[1]}"
-    timeCardID = f'TCARD{emplyeeCode}{period}'
-    df = run_query(conn, """Select Approval From Time_Card Where TimeCardID = ?""",[timeCardID])
-    
-    return int(df.iloc[0,0]) != 0
+    timeCardID = f'TCARD{employeeCode}{period}'
+
+    df = run_query(conn, """
+        SELECT Approval, Acknowledged 
+        FROM Time_Card 
+        WHERE TimeCardID = ?
+    """, [timeCardID])
+
+    if df is None or df.empty:
+        return (0, 0)
+
+    approval    = int(df.iloc[0, 0]) if pd.notna(df.iloc[0, 0]) else 0
+    acknowledged = int(df.iloc[0, 1]) if pd.notna(df.iloc[0, 1]) else 0
+
+    return (approval, acknowledged)

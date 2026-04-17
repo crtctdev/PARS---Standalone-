@@ -2,14 +2,14 @@ import streamlit as st
 from Controllers.DB import *
 from Controllers.timecardAllocationController import * 
 from Classes import * 
-def render(conn, user):
+def render(conn, user, login):
     st.title("Timecard Allocations")
     # Controls Row
-    login = setLoggedInUser(conn, user)
+    
     isManager = login[0].isManager()
     ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([2, 3, 2, 2])
     
-    
+    employee_name = None  # ← initialize before columns
 
     with ctrl1:
         pay_period = st.selectbox(
@@ -25,24 +25,31 @@ def render(conn, user):
             options=employees,
             format_func=lambda e: e.full_name(),
         )
-    approved = checkApproval(employee_name.employee_code, pay_period, conn)
+    approved , acknowledged   = checkState(employee_name.employee_code, pay_period, conn)
+    
     with ctrl3:
-
         if "prev_approval" not in st.session_state:
             st.session_state.prev_approval = approved  # set to DB value on load
 
         approvalCheckbox = st.checkbox("Manager Approval", value=approved, disabled=not isManager)
 
-        # Only fires if the checkbox was actually toggled
-        if approvalCheckbox != st.session_state.prev_approval:
-            st.session_state.prev_approval = approvalCheckbox
-            approveTimecard(employee_name.employee_code, login[0].employee_code, pay_period, conn, approvalCheckbox)
-            st.rerun()
-            
-
     with ctrl4:
-        employee_ack = st.checkbox("Employee Acknowledgement")
+        if "prev_acknowledged" not in st.session_state:
+            st.session_state.prev_acknowledged = acknowledged  # set to DB value on load
 
+        acknowledgedCheckbox = st.checkbox("Employee Acknowledgement", value=acknowledged)
+
+        
+    # Only fires if the checkbox was actually toggled
+    if approvalCheckbox != st.session_state.prev_approval:
+        st.session_state.prev_approval = approvalCheckbox
+        changeTimecardState(employee_name.employee_code, login[0].employee_code, pay_period, conn, approvalCheckbox , acknowledgedCheckbox)
+        st.rerun()   
+    # Only fires if the checkbox was actually toggled
+    if acknowledgedCheckbox != st.session_state.prev_acknowledged:
+        st.session_state.prev_acknowledged = acknowledgedCheckbox
+        changeTimecardState(employee_name.employee_code, login[0].employee_code, pay_period, conn, approvalCheckbox , acknowledgedCheckbox)
+        st.rerun()
     st.markdown("---")
     
 

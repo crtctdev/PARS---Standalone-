@@ -250,7 +250,8 @@ st.markdown(f"""
 
 st.divider()
 
-
+login = setLoggedInUser(conn, user)
+isManager = login[0].isManager()
 
 # ── Two-Column Layout ─────────────────────────────────────────────────────────
 sidebar_col, main_col = st.columns([1, 5])
@@ -258,9 +259,13 @@ sidebar_col, main_col = st.columns([1, 5])
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with sidebar_col:
     with st.expander("Employee Self Service", expanded=True):
+        #limit page choices depended on if manager 
         pages = [
+        "Timecard Allocations",
+        "Approval Report Manager",
+        "Time Card Report"
+        ] if isManager else [
             "Timecard Allocations",
-            "Approval Report Manager",
             "Time Card Report"
         ]
         for page in pages:
@@ -268,9 +273,12 @@ with sidebar_col:
             if is_active:
                 st.markdown(f'<div class="active-nav">{page}</div>', unsafe_allow_html=True)
             else:
-                if st.button(page, use_container_width=True, key=page):
-                    st.session_state.active_page = page
-                    st.rerun()
+                if page == "Time Card Report":
+                    st.link_button("Time Card Report", "https://app.powerbi.com/links/tOiI-kPzTl?ctid=31c347a9-3e62-4167-b697-eacfb065e074&pbi_source=linkShare", use_container_width=True)
+                else:
+                    if st.button(page, use_container_width=True, key=page):
+                        st.session_state.active_page = page
+                        st.rerun()
 
     st.markdown('<p class="sidebar-label">Import</p>', unsafe_allow_html=True)
     uploaded_file = st.file_uploader("Excel file", type=["xlsx", "xls"], label_visibility="collapsed")
@@ -281,10 +289,11 @@ with sidebar_col:
 
 # ── MAIN CONTENT ──────────────────────────────────────────────────────────────
 with main_col:
+    
     match st.session_state.active_page:
         case "Timecard Allocations":
-            timecard_allocations.render(conn, user)
+            timecard_allocations.render(conn, user, login)
         case "Approval Report Manager":
-            approval_report_manager.render(conn, user)
+            approval_report_manager.render(conn, user, login)
         case "Time Card Report":
-            time_card_report.render(conn, user)
+            st.markdown('<script>window.open("https://app.powerbi.com/links/tOiI-kPzTl?ctid=31c347a9-3e62-4167-b697-eacfb065e074&pbi_source=linkShare", "_blank");</script>', unsafe_allow_html=True)

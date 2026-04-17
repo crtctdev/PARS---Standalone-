@@ -48,7 +48,7 @@ def group_df(df, colName):
 
 
 def setLoggedInUser(conn, user):
-    print(user['email'])
+    
     """
     Set Main App Full User 
     """
@@ -57,6 +57,7 @@ def setLoggedInUser(conn, user):
     """, [user['email']]
     )
     
+    #never gets more than one 
     return [Employee(
         row["EmployeeCode"],
         row["EmployeeLast"],
