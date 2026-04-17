@@ -274,7 +274,14 @@ with sidebar_col:
                 st.markdown(f'<div class="active-nav">{page}</div>', unsafe_allow_html=True)
             else:
                 if page == "Time Card Report":
-                    st.link_button("Time Card Report", "https://app.powerbi.com/links/tOiI-kPzTl?ctid=31c347a9-3e62-4167-b697-eacfb065e074&pbi_source=linkShare", use_container_width=True)
+                    employee_code = login[0].employee_code
+                    dept_code = login[0].dept_code
+                    print(employee_code , dept_code)
+                    print(isManager)
+                    if not isManager:
+                            st.link_button("Time Card Report", f"https://app.powerbi.com/links/tOiI-kPzTl?ctid=31c347a9-3e62-4167-b697-eacfb065e074&pbi_source=linkShare&filter=Invoked_x0020_function/EmployeeCode eq '{employee_code}'", use_container_width=True)
+                    else:
+                            st.link_button("Time Card Report", f"https://app.powerbi.com/links/tOiI-kPzTl?ctid=31c347a9-3e62-4167-b697-eacfb065e074&pbi_source=linkShare&filter=Invoked_x0020_function/DepartmentCode eq '{dept_code}'", use_container_width=True)
                 else:
                     if st.button(page, use_container_width=True, key=page):
                         st.session_state.active_page = page
