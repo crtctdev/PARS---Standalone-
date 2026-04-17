@@ -275,13 +275,13 @@ with sidebar_col:
             else:
                 if page == "Time Card Report":
                     employee_code = login[0].employee_code
+                    managing_dept = login[0].managing_department
                     dept_code = login[0].dept_code
-                    print(employee_code , dept_code)
-                    print(isManager)
+                    print(login[0].managing_department)
                     if not isManager:
                             st.link_button("Time Card Report", f"https://app.powerbi.com/links/tOiI-kPzTl?ctid=31c347a9-3e62-4167-b697-eacfb065e074&pbi_source=linkShare&filter=Invoked_x0020_function/EmployeeCode eq '{employee_code}'", use_container_width=True)
                     else:
-                            st.link_button("Time Card Report", f"https://app.powerbi.com/links/tOiI-kPzTl?ctid=31c347a9-3e62-4167-b697-eacfb065e074&pbi_source=linkShare&filter=Invoked_x0020_function/DepartmentCode eq '{dept_code}'", use_container_width=True)
+                            st.link_button("Time Card Report", f"https://app.powerbi.com/links/tOiI-kPzTl?ctid=31c347a9-3e62-4167-b697-eacfb065e074&pbi_source=linkShare&filter=Invoked_x0020_function/DepartmentCode eq '{managing_dept}' or Invoked_x0020_function/DepartmentCode eq '{dept_code}'", use_container_width=True)
                 else:
                     if st.button(page, use_container_width=True, key=page):
                         st.session_state.active_page = page
