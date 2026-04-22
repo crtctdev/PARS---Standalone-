@@ -21,7 +21,6 @@ def importTimeCards(df, conn):
     """
     existing_records = []
     missing_employees = []
-
     # Add Date column to df BEFORE grouping
     df["Date"] = pd.to_datetime(df["OutPunchTime"], errors='coerce').dt.normalize()
     # Get max date of the whole card
@@ -39,58 +38,71 @@ def importTimeCards(df, conn):
             createTimeCard(max_date_str, employeecode, timeCardID, 0, conn)
 
     # Group by Employee Code AND Date
-    groups = df.groupby(["EECode", "Date"])
-    for (employeecode, date), groupdf in groups:
+    day_groups = df.groupby(["EECode", "Date"])
+    for (employeecode, date), daydf in day_groups:
         employeecode = str(employeecode).strip()
-        
 
-        # Determine total hours for the day
-        total_hours = groupdf["EarnHours"].sum()
-
-        # Total Hours Is Dependent on the allocated amount per day per employee
+        # Get hours allowed for this employee
         hours_result = run_query(conn, """
             Select PayPeriodHours From EmployeeInformation Where EmployeeCode = ? 
         """, [employeecode])
-
         try:
             if hours_result is None or hours_result.empty:
                 missing_employees.append(employeecode)
-                
                 continue
             hoursAllowed = hours_result.iloc[0, 0]
             if pd.isna(hoursAllowed) or hoursAllowed == 0:
                 missing_employees.append(employeecode)
-                
                 continue
         except Exception as e:
             missing_employees.append(employeecode)
-            
             continue
 
-        if total_hours == 0: total_hours = 7
-
-        # Create the Schedule ID e.g. SCHA0LF20251207
-        schedualID = f"SCH{employeecode}{date.strftime('%Y%m%d')}"
-        # Determine percentage of the day
-        percentage = round((total_hours / hoursAllowed) * 100, 2)
-        # Get timeCardID from max_dates
         timeCardID = f"TCARD{employeecode}{max_date.strftime('%Y%m%d')}"
-        # Check if schedule record already exists
+
+        # Split into non-regular and regular rows
+        non_regular = daydf[daydf["EarnCode"].notna() & (daydf["EarnCode"] != "")]
+        non_regular_hours = non_regular["EarnHours"].sum()
+
+        # --- Non-Regular Pay Type Rows ---
+        for earn_code, earn_group in non_regular.groupby("EarnCode"):
+            earn_code = str(earn_code).strip()
+            earn_hours = earn_group["EarnHours"].sum()
+
+            # Resolve earn code description
+            pay_df = run_query(conn, """
+                SELECT Typedesc FROM dbo.PaycomEarnCodes WHERE Typecode = ?
+            """, [earn_code])
+            pay_type = pay_df.iloc[0, 0] if not pay_df.empty else earn_code
+
+            schedualID = f"SCH{employeecode}{date.strftime('%Y%m%d')}{earn_code}"
+            percentage = round((earn_hours / hoursAllowed) * 100, 2)
+
+            schedule_existing = run_query(conn, """
+                SELECT * FROM dbo.Schedule WHERE ScheduleID = ?
+            """, [schedualID])
+            if not schedule_existing.empty:
+                existing_records.append(schedualID)
+                continue
+
+            run_query(conn, """
+                INSERT INTO dbo.Schedule (ScheduleID, EmployeeCode, Date, PayType, TotalHours, Percentage, TimeCardID)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, [schedualID, employeecode, date.strftime('%Y%m%d'), str(pay_type), earn_hours, percentage, timeCardID])
+
+        # --- Regular Pay Row (remaining hours) ---
+        regular_hours = daydf["EarnHours"].sum() - non_regular_hours
+        if regular_hours <= 0:
+            regular_hours = hoursAllowed - non_regular_hours
+        if regular_hours <= 0:
+            continue
+
+        schedualID = f"SCH{employeecode}{date.strftime('%Y%m%d')}REG"
+        percentage = round((regular_hours / hoursAllowed) * 100, 2)
+
         schedule_existing = run_query(conn, """
             SELECT * FROM dbo.Schedule WHERE ScheduleID = ?
         """, [schedualID])
-
-        earn_code = groupdf["EarnCode"].iloc[0]
-        pay_type = "Regular" if pd.isna(earn_code) else earn_code
-        
-
-        if pay_type != "Regular":
-            pay_df = run_query(conn, """
-                SELECT Typedesc FROM dbo.PaycomEarnCodes WHERE Typecode = ?
-            """, [pay_type])
-            if not pay_df.empty:
-                pay_type = pay_df.iloc[0, 0]
-
         if not schedule_existing.empty:
             existing_records.append(schedualID)
             continue
@@ -98,7 +110,7 @@ def importTimeCards(df, conn):
         run_query(conn, """
             INSERT INTO dbo.Schedule (ScheduleID, EmployeeCode, Date, PayType, TotalHours, Percentage, TimeCardID)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, [schedualID, employeecode, date.strftime('%Y%m%d'), str(pay_type), total_hours, percentage, timeCardID])
+        """, [schedualID, employeecode, date.strftime('%Y%m%d'), 'Regular', regular_hours, percentage, timeCardID])
 
     if missing_employees:
         print(f"Missing employees not found in EmployeeInformation: {list(set(missing_employees))}")
