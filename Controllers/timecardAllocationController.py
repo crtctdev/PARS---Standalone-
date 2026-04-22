@@ -42,7 +42,7 @@ def importTimeCards(df, conn):
     groups = df.groupby(["EECode", "Date"])
     for (employeecode, date), groupdf in groups:
         employeecode = str(employeecode).strip()
-        print(f"Looking up EmployeeCode: '{employeecode}' (type: {type(employeecode)})")
+        
 
         # Determine total hours for the day
         total_hours = groupdf["EarnHours"].sum()
@@ -55,16 +55,16 @@ def importTimeCards(df, conn):
         try:
             if hours_result is None or hours_result.empty:
                 missing_employees.append(employeecode)
-                print(f"Skipping {employeecode} - not found in EmployeeInformation")
+                
                 continue
             hoursAllowed = hours_result.iloc[0, 0]
             if pd.isna(hoursAllowed) or hoursAllowed == 0:
                 missing_employees.append(employeecode)
-                print(f"Skipping {employeecode} - PayPeriodHours is null or zero")
+                
                 continue
         except Exception as e:
             missing_employees.append(employeecode)
-            print(f"Skipping {employeecode} - error reading PayPeriodHours: {e}")
+            
             continue
 
         if total_hours == 0: total_hours = 7
@@ -82,7 +82,7 @@ def importTimeCards(df, conn):
 
         earn_code = groupdf["EarnCode"].iloc[0]
         pay_type = "Regular" if pd.isna(earn_code) else earn_code
-        print(pay_type)
+        
 
         if pay_type != "Regular":
             pay_df = run_query(conn, """
