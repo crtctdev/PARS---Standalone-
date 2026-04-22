@@ -1,10 +1,14 @@
 import msal
 import streamlit as st
-
+import socket
 CLIENT_ID = st.secrets["AZURE_CLIENT_ID"]
 CLIENT_SECRET = st.secrets["AZURE_CLIENT_SECRET"]
 TENANT_ID = st.secrets["AZURE_TENANT_ID"]
-REDIRECT_URI = st.secrets["AZURE_REDIRECT_URI"]
+
+
+local_ip = socket.gethostbyname(socket.gethostname())
+REDIRECT_URI = st.secrets["AZURE_REDIRECT_URI_LOCAL"] if local_ip != "10.10.20.3" else st.secrets["AZURE_REDIRECT_URI_SERVER"]
+
 
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 SCOPES = ["User.Read"]

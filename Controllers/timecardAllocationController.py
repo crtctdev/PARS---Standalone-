@@ -24,11 +24,11 @@ def importTimeCards(df, conn):
 
     # Add Date column to df BEFORE grouping
     df["Date"] = pd.to_datetime(df["OutPunchTime"], errors='coerce').dt.normalize()
-    # Get max date per employee
-    max_dates = df.groupby("EECode")["Date"].max()
+    # Get max date of the whole card
+    max_date = df["Date"].max()
     
     # Create one time card per employee
-    for employeecode, max_date in max_dates.items():
+    for employeecode in df["EECode"].unique():
         employeecode = str(employeecode).strip()
         max_date_str = max_date.strftime('%Y%m%d')
         timeCardID = f"TCARD{employeecode}{max_date_str}"
@@ -74,7 +74,7 @@ def importTimeCards(df, conn):
         # Determine percentage of the day
         percentage = round((total_hours / hoursAllowed) * 100, 2)
         # Get timeCardID from max_dates
-        timeCardID = f"TCARD{employeecode}{max_dates[employeecode].strftime('%Y%m%d')}"
+        timeCardID = f"TCARD{employeecode}{max_date.strftime('%Y%m%d')}"
         # Check if schedule record already exists
         schedule_existing = run_query(conn, """
             SELECT * FROM dbo.Schedule WHERE ScheduleID = ?
