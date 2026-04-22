@@ -33,8 +33,12 @@ def render_report(filter_string=""):
     embed_url = "https://app.powerbi.com/reportEmbed?reportId=c03466a4-103f-42aa-9225-597cd5ce1a25&autoAuth=true&ctid=31c347a9-3e62-4167-b697-eacfb065e074"
     if filter_string:
         embed_url += f"&filter={filter_string}"
+
     st.markdown(f"""
-        <iframe title="CRT - Personal Activity Report" width="1140" height="541.25" 
-        src="{embed_url}" 
-        frameborder="0" allowFullScreen="true"></iframe>
+        <div style="width:100%; height:85vh; overflow:hidden;">
+            <iframe title="CRT - Personal Activity Report" 
+            style="width:100%; height:100%; border:none;"
+            src="{embed_url}" 
+            allowFullScreen="true"></iframe>
+        </div>
     """, unsafe_allow_html=True)
