@@ -24,10 +24,10 @@ def importTimeCards(df, conn):
     existing_records = []
 
     # Add Date column to df BEFORE grouping
-    df["Date"] = pd.to_datetime(df["Out_Effective_Time"], errors='coerce').dt.normalize()
+    df["Date"] = pd.to_datetime(df["OutPunchTime"], errors='coerce').dt.normalize()
 
     # Get max date per employee
-    max_dates = df.groupby("Employee_Code")["Date"].max()
+    max_dates = df.groupby("EECode")["Date"].max()
     
     # Create one time card per employee
     for employeecode, max_date in max_dates.items():
@@ -42,17 +42,23 @@ def importTimeCards(df, conn):
             createTimeCard(max_date_str, employeecode, timeCardID, 0, conn)
 
     # Group by Employee Code AND Date
-    groups = df.groupby(["Employee_Code", "Date"])
+    groups = df.groupby(["EECode", "Date"])
 
     for (employeecode, date), groupdf in groups:
         # Determine total hours for the day
-        total_hours = groupdf["Hours"].sum()
+        total_hours = groupdf["EarnHours"].sum()
 
+        #Total Hours Is Dependent on the allocated amount per day per employee not a base set of 7 
+
+        hoursAllowed = run_query(conn, """
+        Select PayPeriodHours From EmployeeInformation Where EmployeeCode = ? 
+        """, [employeecode]).iloc[0][0]
+        if total_hours == 0 : total_hours = 7
         # Create the Schedule ID e.g. SCHA0LF20251207
         schedualID = f"SCH{employeecode}{date.strftime('%Y%m%d')}"
 
         # Determine percentage of the day
-        percentage = round((total_hours / 7) * 100, 2)
+        percentage = round((total_hours / hoursAllowed) * 100, 2)
 
         # Get timeCardID from max_dates
         timeCardID = f"TCARD{employeecode}{max_dates[employeecode].strftime('%Y%m%d')}"
@@ -61,7 +67,15 @@ def importTimeCards(df, conn):
         schedule_existing = run_query(conn, """
             SELECT * FROM dbo.Schedule WHERE ScheduleID = ?
         """, [schedualID])
-
+        earn_code = groupdf["EarnCode"].iloc[0]
+        pay_type = "Regular" if pd.isna(earn_code) else earn_code
+        print(pay_type)
+        if(pay_type != "Regular"):
+            df = run_query(conn, """
+            SELECT Typedesc FROM dbo.PaycomEarnCodes WHERE Typecode = ?
+            """, [pay_type])
+            pay_type = (df.iloc[0][0])
+        
         if not schedule_existing.empty:
             existing_records.append(schedualID)
             continue
@@ -69,7 +83,7 @@ def importTimeCards(df, conn):
         run_query(conn, """
             INSERT INTO dbo.Schedule (ScheduleID, EmployeeCode, Date, PayType, TotalHours, Percentage, TimeCardID)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, [schedualID, employeecode, date.strftime('%Y%m%d'), "Regular", total_hours, percentage, timeCardID])
+        """, [schedualID, employeecode, date.strftime('%Y%m%d'), str(pay_type), total_hours, percentage, timeCardID])
 
     return existing_records
 
@@ -118,7 +132,8 @@ def getEmployeesByPayPeriod(conn, pay_period, user):
         row["EmployeeFirst"],
         row["DepartmentCode"],
         row["WorkEmail"],
-        "N/A"
+        "N/A",
+        row["PayPeriodHours"]
     ) for _, row in df.iterrows()]
 
 

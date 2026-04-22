@@ -28,3 +28,13 @@ def exchange_code_for_token(code):
         scopes=SCOPES,
         redirect_uri=REDIRECT_URI,
     )
+
+def render_report(filter_string=""):
+    embed_url = "https://app.powerbi.com/reportEmbed?reportId=c03466a4-103f-42aa-9225-597cd5ce1a25&autoAuth=true&ctid=31c347a9-3e62-4167-b697-eacfb065e074"
+    if filter_string:
+        embed_url += f"&filter={filter_string}"
+    st.markdown(f"""
+        <iframe title="CRT - Personal Activity Report" width="1140" height="541.25" 
+        src="{embed_url}" 
+        frameborder="0" allowFullScreen="true"></iframe>
+    """, unsafe_allow_html=True)

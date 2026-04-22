@@ -64,5 +64,8 @@ def setLoggedInUser(conn, user):
         row["EmployeeFirst"],
         row["DepartmentCode"],
         row["WorkEmail"],
-        row["ManagingDepartment"]
+        row["ManagingDepartment"],
+        row["PayPeriodHours"]
+        
+        
     ) for _, row in df.iterrows()]
