@@ -19,63 +19,78 @@ def importTimeCards(df, conn):
     """
     Function to handle the importing of time cards and allocation to the db 
     """
-
-    # For Tracking existing schedules - shouldnt really happen 
     existing_records = []
+    missing_employees = []
 
     # Add Date column to df BEFORE grouping
     df["Date"] = pd.to_datetime(df["OutPunchTime"], errors='coerce').dt.normalize()
-
     # Get max date per employee
     max_dates = df.groupby("EECode")["Date"].max()
     
     # Create one time card per employee
     for employeecode, max_date in max_dates.items():
+        employeecode = str(employeecode).strip()
         max_date_str = max_date.strftime('%Y%m%d')
         timeCardID = f"TCARD{employeecode}{max_date_str}"
-
         timeCardExisting = run_query(conn, """
             SELECT * FROM dbo.Time_Card WHERE TimeCardID = ?
         """, [timeCardID])
-
         if timeCardExisting.empty:
             createTimeCard(max_date_str, employeecode, timeCardID, 0, conn)
 
     # Group by Employee Code AND Date
     groups = df.groupby(["EECode", "Date"])
-
     for (employeecode, date), groupdf in groups:
+        employeecode = str(employeecode).strip()
+        print(f"Looking up EmployeeCode: '{employeecode}' (type: {type(employeecode)})")
+
         # Determine total hours for the day
         total_hours = groupdf["EarnHours"].sum()
 
-        #Total Hours Is Dependent on the allocated amount per day per employee not a base set of 7 
+        # Total Hours Is Dependent on the allocated amount per day per employee
+        hours_result = run_query(conn, """
+            Select PayPeriodHours From EmployeeInformation Where EmployeeCode = ? 
+        """, [employeecode])
 
-        hoursAllowed = run_query(conn, """
-        Select PayPeriodHours From EmployeeInformation Where EmployeeCode = ? 
-        """, [employeecode]).iloc[0][0]
-        if total_hours == 0 : total_hours = 7
+        try:
+            if hours_result is None or hours_result.empty:
+                missing_employees.append(employeecode)
+                print(f"Skipping {employeecode} - not found in EmployeeInformation")
+                continue
+            hoursAllowed = hours_result.iloc[0, 0]
+            if pd.isna(hoursAllowed) or hoursAllowed == 0:
+                missing_employees.append(employeecode)
+                print(f"Skipping {employeecode} - PayPeriodHours is null or zero")
+                continue
+        except Exception as e:
+            missing_employees.append(employeecode)
+            print(f"Skipping {employeecode} - error reading PayPeriodHours: {e}")
+            continue
+
+        if total_hours == 0: total_hours = 7
+
         # Create the Schedule ID e.g. SCHA0LF20251207
         schedualID = f"SCH{employeecode}{date.strftime('%Y%m%d')}"
-
         # Determine percentage of the day
         percentage = round((total_hours / hoursAllowed) * 100, 2)
-
         # Get timeCardID from max_dates
         timeCardID = f"TCARD{employeecode}{max_dates[employeecode].strftime('%Y%m%d')}"
-
         # Check if schedule record already exists
         schedule_existing = run_query(conn, """
             SELECT * FROM dbo.Schedule WHERE ScheduleID = ?
         """, [schedualID])
+
         earn_code = groupdf["EarnCode"].iloc[0]
         pay_type = "Regular" if pd.isna(earn_code) else earn_code
         print(pay_type)
-        if(pay_type != "Regular"):
-            df = run_query(conn, """
-            SELECT Typedesc FROM dbo.PaycomEarnCodes WHERE Typecode = ?
+
+        if pay_type != "Regular":
+            pay_df = run_query(conn, """
+                SELECT Typedesc FROM dbo.PaycomEarnCodes WHERE Typecode = ?
             """, [pay_type])
-            pay_type = (df.iloc[0][0])
-        
+            if not pay_df.empty:
+                pay_type = pay_df.iloc[0, 0]
+
         if not schedule_existing.empty:
             existing_records.append(schedualID)
             continue
@@ -85,7 +100,10 @@ def importTimeCards(df, conn):
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, [schedualID, employeecode, date.strftime('%Y%m%d'), str(pay_type), total_hours, percentage, timeCardID])
 
-    return existing_records
+    if missing_employees:
+        print(f"Missing employees not found in EmployeeInformation: {list(set(missing_employees))}")
+
+    return existing_records, missing_employees
 
 
 def createTimeCard(payPeriod, EmployeeCode, TimeCardID, Approved, conn):
