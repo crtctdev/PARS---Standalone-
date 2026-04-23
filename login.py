@@ -1,14 +1,27 @@
+import os
 import msal
 import streamlit as st
 import socket
+
 CLIENT_ID = st.secrets["AZURE_CLIENT_ID"]
 CLIENT_SECRET = st.secrets["AZURE_CLIENT_SECRET"]
 TENANT_ID = st.secrets["AZURE_TENANT_ID"]
 
-
 local_ip = socket.gethostbyname(socket.gethostname())
-REDIRECT_URI = st.secrets["AZURE_REDIRECT_URI_LOCAL"] if local_ip != "10.10.20.3" else st.secrets["AZURE_REDIRECT_URI_SERVER"]
+is_server = local_ip == "10.10.20.3"
 
+if is_server:
+    st.config.set_option("server.port", 8056)
+    st.config.set_option("server.sslCertFile", "cert/cert.pem")
+    st.config.set_option("server.sslKeyFile", "cert/key.pem")
+else:
+    st.config.set_option("server.port", 8501)
+
+st.config.set_option("server.enableCORS", False)
+st.config.set_option("server.enableXsrfProtection", False)
+st.config.set_option("server.headless", True)
+
+REDIRECT_URI = st.secrets["AZURE_REDIRECT_URI_SERVER"] if is_server else st.secrets["AZURE_REDIRECT_URI_LOCAL"]
 
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
 SCOPES = ["User.Read"]
