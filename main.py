@@ -253,7 +253,9 @@ st.markdown(f"""
 st.divider()
 
 login = setLoggedInUser(conn, user)
-isManager = login[0].isManager()
+
+#isManager = login[0].isManager()
+isManager = True
 
 # ── Two-Column Layout ─────────────────────────────────────────────────────────
 sidebar_col, main_col = st.columns([1, 5])
@@ -281,54 +283,55 @@ with sidebar_col:
 
     if "file_uploader_key" not in st.session_state:
         st.session_state.file_uploader_key = 0
+    if isManager: 
+        st.markdown('<p class="sidebar-label">Import</p>', unsafe_allow_html=True)
+        
+        uploaded_file = st.file_uploader("Excel file", type=["xlsx", "xls"], label_visibility="collapsed", key=st.session_state.file_uploader_key)
 
-    st.markdown('<p class="sidebar-label">Import</p>', unsafe_allow_html=True)
-    
-    uploaded_file = st.file_uploader("Excel file", type=["xlsx", "xls"], label_visibility="collapsed", key=st.session_state.file_uploader_key)
-
-    if uploaded_file is not None:
-        with st.spinner("Importing time cards..."):
-            df = pd.read_excel(uploaded_file)
-            st.dataframe(df)
-            importTimeCards(df, conn)
-            st.session_state.file_uploader_key += 1
-            st.rerun()
+        if uploaded_file is not None:
+            with st.spinner("Importing time cards..."):
+                df = pd.read_excel(uploaded_file)
+                st.dataframe(df)
+                importTimeCards(df, conn)
+                st.session_state.file_uploader_key += 1
+                st.rerun()
     ctrl1, ctrl2 = st.columns([1, 1])
     
     pay_periods = getPayPeriods(conn)
+    if isManager:
+        with ctrl1:
+            pay_period_start = st.selectbox(
+                "Pay Period Start",
+                options=pay_periods,
+                index=0,
+            )
+        with ctrl2:
+            pay_period_end = st.selectbox(
+                "Pay Period End",
+                options=pay_periods,
+                index=0,
+            )
+     
+        if st.button("Download Export", use_container_width=True):
+            # Run your query
+            print(pay_period_start , pay_period_end)
+            df = run_query(conn,
+                "SELECT * FROM dbo.fn_EmployeeTaskFundHours(?, ?)",
+                [pay_period_start, pay_period_end]
+            )
 
-    with ctrl1:
-        pay_period_start = st.selectbox(
-            "Pay Period Start",
-            options=pay_periods,
-            index=0,
-        )
-    with ctrl2:
-        pay_period_end = st.selectbox(
-            "Pay Period End",
-            options=pay_periods,
-            index=0,
-        )
-    if st.button("Download Export", use_container_width=True):
-        # Run your query
-        print(pay_period_start , pay_period_end)
-        df = run_query(conn,
-            "SELECT * FROM dbo.fn_EmployeeTaskFundHours(?, ?)",
-            [pay_period_start, pay_period_end]
-        )
+            # Write to in-memory Excel file
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                df.to_excel(writer, index=False, sheet_name="Export")
+            buffer.seek(0)
 
-        # Write to in-memory Excel file
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Export")
-        buffer.seek(0)
-
-        st.download_button(
-            label="Click to Save",
-            data=buffer,
-            file_name="export.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+            st.download_button(
+                label="Click to Save",
+                data=buffer,
+                file_name="export.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 # ── MAIN CONTENT ──────────────────────────────────────────────────────────────
 with main_col:
     match st.session_state.active_page:
