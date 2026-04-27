@@ -91,7 +91,7 @@ def render(conn, user, login):
                     if st.button(arrow, key=f"btn_{schedule_id}"):
                         st.session_state[key] = not st.session_state[key]
                         st.rerun()
-
+                #This is for testing purposes 
                 col2.write(row["Date"])
                 col3.write(row["PayType"])
                 col4.write(row["TotalHours"])
