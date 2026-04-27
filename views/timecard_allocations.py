@@ -50,9 +50,7 @@ def render(conn, user, login):
         st.session_state.prev_acknowledged = acknowledgedCheckbox
         changeTimecardState(employee_name.employee_code, login[0].employee_code, pay_period, conn, approvalCheckbox , acknowledgedCheckbox)
         st.rerun()
-    st.markdown("---")
     
-
     refresh_col, status_col , _ = st.columns([1,2,6])
     with refresh_col:
         st.button("🔄 Refresh", key="refresh_grid1")
@@ -62,20 +60,20 @@ def render(conn, user, login):
     if employee_name is not None:
         timecard_df = getSchedule(conn, employee_name.employee_code, pay_period)
         fund_options = getFundsByEmployee(conn, employee_name.employee_code)
-        
-        
-        
-        if timecard_df.empty:
-            st.caption("No records to display.")
-        else:
-            
-            with st.container(border=True):
-                col1, col2, col3, col4, col5 = st.columns([0.5, 2, 2, 1.5, 1.5])
-                col1.markdown("**&nbsp;**")
-                col2.markdown("**Date**")
-                col3.markdown("**Pay Type**")
-                col4.markdown("**Total Hours**")
-                col5.markdown("**Percentage**")
+
+    if timecard_df.empty:
+        st.caption("No records to display.")
+    else:
+        with st.container(border=True):
+
+            col1, col2, col3, col4, col5 = st.columns([0.5, 2, 2, 1.5, 1.5])
+            col1.markdown("&nbsp;")
+            col2.markdown("**Date**")
+            col3.markdown("**Pay Type**")
+            col4.markdown("**Total Hours**")
+            col5.markdown("**Percentage**")
+
+            st.divider()
 
             task_options = getTasks(conn)
 
@@ -88,7 +86,6 @@ def render(conn, user, login):
                     st.session_state[key] = False
 
                 col1, col2, col3, col4, col5 = st.columns([0.5, 2, 2, 1.5, 1.5])
-
                 with col1:
                     arrow = "▼" if st.session_state[key] else "►"
                     if st.button(arrow, key=f"btn_{schedule_id}"):
@@ -99,8 +96,8 @@ def render(conn, user, login):
                 col3.write(row["PayType"])
                 col4.write(row["TotalHours"])
                 col5.write(f"{row['Percentage']}%")
-
-                if st.session_state[f"expanded_{schedule_id}"]:
+                st.markdown("---")
+                if st.session_state[key]:
                     with st.container():
                         allocations_df = getRecords(conn, schedule_id)
 
@@ -129,8 +126,8 @@ def render(conn, user, login):
 
                         st.write(f"**Total Allocation: {total:.2f}**")
 
-                        if total > float(row["TotalHours"]):
-                            st.error(f"⚠️ Total cannot exceed {float(row['TotalHours'])} hours")
+                        if total != float(row["TotalHours"]):
+                            st.error("Allocated Hours Must Equate To Total Hours")
 
                         if st.button(
                             "💾 Save Allocations",
@@ -145,9 +142,5 @@ def render(conn, user, login):
                                 deleteRecord(conn, int(deleted_id))
 
                             saveAllocations(conn, schedule_id, edited_df)
-                            st.success("✅ Saved successfully!")
-
-                    st.markdown(
-                        "<hr style='margin:2px 0; border:none; border-top:1px solid #eee;'>",
-                        unsafe_allow_html=True,
-                    )
+                            st.success("✅ Saved successfully!")  
+                            
