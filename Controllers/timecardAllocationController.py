@@ -16,35 +16,38 @@ def getPayPeriods(conn):
     return formatted_dates
      
 def importTimeCards(df, conn):
-    """
-    Function to handle the importing of time cards and allocation to the db 
-    """
     existing_records = []
     missing_employees = []
-    # Add Date column to df BEFORE grouping
+
     df["Date"] = pd.to_datetime(df["OutPunchTime"], errors='coerce').dt.normalize()
-    # Get max date of the whole card
     max_date = df["Date"].max()
-    
+    min_date = df["Date"].min()
+
+    # Always generate exactly 10 days for the pay period
+    pay_period_dates = pd.date_range(start=min_date, periods=10, freq='D')
+
     # Create one time card per employee
     for employeecode in df["EECode"].unique():
         employeecode = str(employeecode).strip()
         max_date_str = max_date.strftime('%Y%m%d')
+        min_date_str = min_date.strftime('%Y%m%d')
         timeCardID = f"TCARD{employeecode}{max_date_str}"
         timeCardExisting = run_query(conn, """
             SELECT * FROM dbo.Time_Card WHERE TimeCardID = ?
         """, [timeCardID])
         if timeCardExisting.empty:
-            createTimeCard(max_date_str, employeecode, timeCardID, 0, conn)
+            createTimeCard(max_date_str, employeecode, timeCardID, 0, min_date_str, conn)
 
-    # Group by Employee Code AND Date
+    # Track every (employeecode, date) that gets processed from real punch data
+    processed = set()
+
     day_groups = df.groupby(["EECode", "Date"])
     for (employeecode, date), daydf in day_groups:
         employeecode = str(employeecode).strip()
+        processed.add((employeecode, date))
 
-        # Get hours allowed for this employee
         hours_result = run_query(conn, """
-            Select PayPeriodHours From EmployeeInformation Where EmployeeCode = ? 
+            Select PayPeriodHours From EmployeeInformation Where EmployeeCode = ?
         """, [employeecode])
         try:
             if hours_result is None or hours_result.empty:
@@ -60,16 +63,13 @@ def importTimeCards(df, conn):
 
         timeCardID = f"TCARD{employeecode}{max_date.strftime('%Y%m%d')}"
 
-        # Split into non-regular and regular rows
         non_regular = daydf[daydf["EarnCode"].notna() & (daydf["EarnCode"] != "")]
         non_regular_hours = non_regular["EarnHours"].sum()
 
-        # --- Non-Regular Pay Type Rows ---
         for earn_code, earn_group in non_regular.groupby("EarnCode"):
             earn_code = str(earn_code).strip()
             earn_hours = earn_group["EarnHours"].sum()
 
-            # Resolve earn code description
             pay_df = run_query(conn, """
                 SELECT Typedesc FROM dbo.PaycomEarnCodes WHERE Typecode = ?
             """, [earn_code])
@@ -90,7 +90,6 @@ def importTimeCards(df, conn):
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, [schedualID, employeecode, date.strftime('%Y%m%d'), str(pay_type), earn_hours, percentage, timeCardID])
 
-        # --- Regular Pay Row (remaining hours) ---
         regular_hours = daydf["EarnHours"].sum() - non_regular_hours
         if regular_hours <= 0:
             regular_hours = hoursAllowed - non_regular_hours
@@ -112,22 +111,59 @@ def importTimeCards(df, conn):
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, [schedualID, employeecode, date.strftime('%Y%m%d'), 'Regular', regular_hours, percentage, timeCardID])
 
+    # --- Backfill any missing days across the full 10-day pay period ---
+    for employeecode in df["EECode"].unique():
+        employeecode = str(employeecode).strip()
+
+        hours_result = run_query(conn, """
+            Select PayPeriodHours From EmployeeInformation Where EmployeeCode = ?
+        """, [employeecode])
+        try:
+            if hours_result is None or hours_result.empty:
+                continue
+            hoursAllowed = hours_result.iloc[0, 0]
+            if pd.isna(hoursAllowed) or hoursAllowed == 0:
+                continue
+        except Exception:
+            continue
+
+        timeCardID = f"TCARD{employeecode}{max_date.strftime('%Y%m%d')}"
+
+        for date in pay_period_dates:
+            if (employeecode, date) in processed:
+                continue  # Already handled with real punch data above
+
+            schedualID = f"SCH{employeecode}{date.strftime('%Y%m%d')}REG"
+
+            schedule_existing = run_query(conn, """
+                SELECT * FROM dbo.Schedule WHERE ScheduleID = ?
+            """, [schedualID])
+            if not schedule_existing.empty:
+                existing_records.append(schedualID)
+                continue
+
+            # No punch data for this day — insert full allocated hours as Regular
+            run_query(conn, """
+                INSERT INTO dbo.Schedule (ScheduleID, EmployeeCode, Date, PayType, TotalHours, Percentage, TimeCardID)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, [schedualID, employeecode, date.strftime('%Y%m%d'), 'Regular', hoursAllowed, 100.0, timeCardID])
+
     if missing_employees:
         print(f"Missing employees not found in EmployeeInformation: {list(set(missing_employees))}")
 
     return existing_records, missing_employees
 
 
-def createTimeCard(payPeriod, EmployeeCode, TimeCardID, Approved, conn):
+def createTimeCard(payPeriod, EmployeeCode, TimeCardID, Approved, MinDate,conn):
     """
     Make an unexisting time card
     """
 
     return run_query(
         conn, """
-    INSERT INTO dbo.Time_Card (TimeCardID, EmployeeCode, PayPeriod, Approval)
-    VALUES (?,?,?,?)
-    """, [TimeCardID, EmployeeCode, payPeriod, Approved]
+    INSERT INTO dbo.Time_Card (TimeCardID, EmployeeCode, PayPeriod, Approval, PayPeriodStart)
+    VALUES (?,?,?,?,?)
+    """, [TimeCardID, EmployeeCode, payPeriod, Approved,MinDate]
               )
 
 
@@ -140,7 +176,7 @@ def getSchedule(conn, EmployeeCode, PayPeriod):
                S.TotalHours, S.Percentage, T.PayPeriod
         FROM Schedule AS S 
         LEFT JOIN Time_Card AS T ON T.TimeCardID = S.TimeCardID 
-        WHERE S.EmployeeCode = ? AND T.PayPeriod = ?
+        WHERE S.EmployeeCode = ? AND T.PayPeriod = ? Order By S.Date ASC
     """, [EmployeeCode, period])
     
 

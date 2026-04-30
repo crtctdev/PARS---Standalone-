@@ -81,7 +81,6 @@ def render(conn, user, login):
                 
                 schedule_id = row["ScheduleID"]
                 key = f"expanded_{schedule_id}"
-
                 if key not in st.session_state:
                     st.session_state[key] = False
 
