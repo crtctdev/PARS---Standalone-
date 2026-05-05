@@ -1,9 +1,10 @@
 import streamlit as st
-from Controllers.timecardAllocationController import getPayPeriods , getEmployeesByPayPeriod
-from Controllers.ApprovalReportController import * 
-def render(conn, user, login : Employee):
+from Controllers.timecardAllocationController import getPayPeriods
+from Controllers.ApprovalReportController import *
+
+
+def render(conn, user, login):
     st.title("Approval Report Manager")
-    
 
     ctrl1, _ = st.columns([2, 5])
 

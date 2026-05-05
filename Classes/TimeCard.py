@@ -4,6 +4,3 @@ class TimeCard:
         self.EmployeeCode = EmployeeCode
         self.TimeCardID = TimeCardID
         self.Approval = Approval
-        
-
-    

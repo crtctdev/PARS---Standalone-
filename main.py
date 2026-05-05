@@ -266,9 +266,10 @@ if not login:
 
 if login[0].work_email == "mapheyp@crtct.org":
     isManager = True
-else :
+else:
     isManager = login[0].isManager()
-#Flag For Testing
+
+
 @st.dialog("New Employee Found in Import")
 def new_employee_dialog():
     missing = st.session_state.missing_employees
@@ -395,14 +396,11 @@ with sidebar_col:
             )
      
         if st.button("Download Export", use_container_width=True):
-            # Run your query
-            print(pay_period_start , pay_period_end)
             df = run_query(conn,
                 "SELECT * FROM dbo.fn_EmployeeTaskFundHours(?, ?)",
                 [pay_period_start, pay_period_end]
             )
 
-            # Write to in-memory Excel file
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
                 df.to_excel(writer, index=False, sheet_name="Export")
@@ -422,11 +420,9 @@ with main_col:
         case "Approval Report Manager":
             approval_report_manager.render(conn, user, login)
         case "Time Card Report":
-            
             employee_code = login[0].employee_code
             managing_dept = login[0].managing_department
             dept_code = login[0].dept_code
-            print(isManager, employee_code, managing_dept, dept_code)  # debug
             if not isManager:
                 render_report(f"Invoked_x0020_function/EmployeeCode eq '{employee_code}'")
             else:
