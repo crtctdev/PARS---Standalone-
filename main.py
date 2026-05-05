@@ -33,6 +33,8 @@ if "file_uploader_key" not in st.session_state:
     st.session_state.file_uploader_key = 0
 if "import_message" not in st.session_state:
     st.session_state.import_message = None
+if "db_employee_codes" not in st.session_state:
+    st.session_state.db_employee_codes = None
 
 code = st.query_params.get("code")
 
@@ -269,6 +271,10 @@ if login[0].work_email == "mapheyp@crtct.org":
 else:
     isManager = login[0].isManager()
 
+if st.session_state.db_employee_codes is None:
+    emp_df = run_query(conn, "SELECT EmployeeCode FROM dbo.EmployeeInformation")
+    st.session_state.db_employee_codes = emp_df["EmployeeCode"].tolist() if emp_df is not None and not emp_df.empty else []
+
 
 @st.dialog("New Employee Found in Import")
 def new_employee_dialog():
@@ -363,6 +369,11 @@ with sidebar_col:
             with st.spinner("Importing time cards..."):
                 df = pd.read_excel(uploaded_file)
                 existing, missing, added, pay_period, pay_period_start = importTimeCards(df, conn)
+
+                import_codes = [str(c).strip() for c in df["EECode"].unique()]
+                unrepresented = [c for c in st.session_state.db_employee_codes if c not in import_codes]
+                auto_allocated = autoAllocateSalariedEmployees(conn, pay_period, pay_period_start, unrepresented)
+
                 logImport(conn, user["email"], pay_period, pay_period_start,
                           added, len(existing), list(set(missing)))
                 st.session_state.missing_employees = list(set(missing))
@@ -370,12 +381,13 @@ with sidebar_col:
                 st.session_state.pending_df = df
                 st.session_state.file_uploader_key += 1
 
+                auto_msg = f" Auto-allocated {len(auto_allocated)} salaried employee(s)." if auto_allocated else ""
                 if added == 0 and existing:
                     st.session_state.import_message = ("error", f"Upload rejected: all {len(existing)} records already exist for this pay period.")
                 elif existing:
-                    st.session_state.import_message = ("warning", f"Imported {added} records. {len(existing)} already existed and were skipped.")
+                    st.session_state.import_message = ("warning", f"Imported {added} records. {len(existing)} already existed and were skipped.{auto_msg}")
                 else:
-                    st.session_state.import_message = ("success", f"Successfully imported {added} records.")
+                    st.session_state.import_message = ("success", f"Successfully imported {added} records.{auto_msg}")
 
                 st.rerun()
     ctrl1, ctrl2 = st.columns([1, 1])

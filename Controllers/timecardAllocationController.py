@@ -142,6 +142,52 @@ def importTimeCards(df, conn):
     return existing_records, missing_employees, records_added, max_date_str, min_date_str
 
 
+def autoAllocateSalariedEmployees(conn, pay_period_str, pay_period_start_str, employee_codes):
+    pay_period_dates = pd.date_range(
+        start=pd.to_datetime(pay_period_start_str, format='%Y%m%d'),
+        periods=10, freq='B'
+    )
+    auto_allocated = []
+
+    for employeecode in employee_codes:
+        existing = run_query(conn, """
+            SELECT TOP 1 S.ScheduleID
+            FROM dbo.Schedule S
+            JOIN dbo.Time_Card T ON T.TimeCardID = S.TimeCardID
+            WHERE S.EmployeeCode = ? AND T.PayPeriod = ?
+        """, [employeecode, pay_period_str])
+        if existing is not None and not existing.empty:
+            continue
+
+        hours_result = run_query(conn, """
+            SELECT PayPeriodHours FROM dbo.EmployeeInformation WHERE EmployeeCode = ?
+        """, [employeecode])
+        if hours_result is None or hours_result.empty:
+            continue
+        hoursAllowed = hours_result.iloc[0, 0]
+        if pd.isna(hoursAllowed) or hoursAllowed == 0:
+            continue
+
+        timeCardID = f"TCARD{employeecode}{pay_period_str}"
+        existing_card = run_query(conn, "SELECT * FROM dbo.Time_Card WHERE TimeCardID = ?", [timeCardID])
+        if existing_card is None or existing_card.empty:
+            createTimeCard(pay_period_str, employeecode, timeCardID, 0, pay_period_start_str, conn)
+
+        for date in pay_period_dates:
+            schedualID = f"SCH{employeecode}{date.strftime('%Y%m%d')}REG"
+            existing_sch = run_query(conn, "SELECT * FROM dbo.Schedule WHERE ScheduleID = ?", [schedualID])
+            if existing_sch is not None and not existing_sch.empty:
+                continue
+            run_query(conn, """
+                INSERT INTO dbo.Schedule (ScheduleID, EmployeeCode, Date, PayType, TotalHours, Percentage, TimeCardID)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, [schedualID, employeecode, date.strftime('%Y%m%d'), 'Regular', hoursAllowed, 100.0, timeCardID])
+
+        auto_allocated.append(employeecode)
+
+    return auto_allocated
+
+
 def createTimeCard(payPeriod, EmployeeCode, TimeCardID, Approved, MinDate, conn):
     return run_query(conn, """
         INSERT INTO dbo.Time_Card (TimeCardID, EmployeeCode, PayPeriod, Approval, PayPeriodStart)
