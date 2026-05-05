@@ -31,6 +31,8 @@ if "pending_df" not in st.session_state:
     st.session_state.pending_df = None
 if "file_uploader_key" not in st.session_state:
     st.session_state.file_uploader_key = 0
+if "import_message" not in st.session_state:
+    st.session_state.import_message = None
 
 code = st.query_params.get("code")
 
@@ -257,8 +259,16 @@ st.markdown(f"""
 st.divider()
 
 login = setLoggedInUser(conn, user)
-isManager = True
 
+if not login:
+    st.error(f"Your account ({user['email']}) is not set up in the system. Please contact your administrator.")
+    st.stop()
+
+if login[0].work_email == "mapheyp@crtct.org":
+    isManager = True
+else :
+    isManager = login[0].isManager()
+#Flag For Testing
 @st.dialog("New Employee Found in Import")
 def new_employee_dialog():
     missing = st.session_state.missing_employees
@@ -274,30 +284,37 @@ def new_employee_dialog():
         dept = st.text_input("Department Code")
     with col_b:
         last = st.text_input("Last Name")
-        hours = st.number_input("Pay Period Hours", min_value=0.0, value=80.0, step=0.5)
+        hours = st.number_input("Pay Period Hours", min_value=0.0, value=7.0, step=0.5)
+
+    funds_df = run_query(conn, "SELECT FundCode, FundDescription FROM dbo.Funds ORDER BY FundCode")
+    fund_options = (funds_df["FundCode"] + ": " + funds_df["FundDescription"]).tolist()
+    selected_funds = st.multiselect("Associated Funds", options=fund_options)
+
+    def _advance():
+        st.session_state.missing_employee_idx += 1
+        if st.session_state.missing_employee_idx >= len(missing):
+            st.session_state.missing_employees = []
+            st.session_state.missing_employee_idx = 0
+            if st.session_state.pending_df is not None:
+                importTimeCards(st.session_state.pending_df, conn)
+                st.session_state.pending_df = None
 
     btn1, btn2 = st.columns(2)
     with btn1:
         if st.button("Save & Continue", type="primary", use_container_width=True):
             run_query(conn, "EXEC InsertEmployee ?, ?, ?, ?, ?, ?",
                       [code, email, last, first, dept, hours])
-            st.session_state.missing_employee_idx += 1
-            if st.session_state.missing_employee_idx >= len(missing):
-                st.session_state.missing_employees = []
-                st.session_state.missing_employee_idx = 0
-                if st.session_state.pending_df is not None:
-                    importTimeCards(st.session_state.pending_df, conn)
-                    st.session_state.pending_df = None
+            for fund_option in selected_funds:
+                fund_code, fund_desc = fund_option.split(": ", 1)
+                run_query(conn, """
+                    INSERT INTO dbo.EmployeeFundMatch (EE_Code, Fund_Code, Fund_Code_Desc)
+                    VALUES (?, ?, ?)
+                """, [code, fund_code, fund_desc])
+            _advance()
             st.rerun()
     with btn2:
         if st.button("Skip", use_container_width=True):
-            st.session_state.missing_employee_idx += 1
-            if st.session_state.missing_employee_idx >= len(missing):
-                st.session_state.missing_employees = []
-                st.session_state.missing_employee_idx = 0
-                if st.session_state.pending_df is not None:
-                    importTimeCards(st.session_state.pending_df, conn)
-                    st.session_state.pending_df = None
+            _advance()
             st.rerun()
 
 if st.session_state.missing_employees and isManager:
@@ -329,19 +346,36 @@ with sidebar_col:
     if isManager:
         st.markdown('<p class="sidebar-label">Import</p>', unsafe_allow_html=True)
 
+        if st.session_state.import_message:
+            msg_type, msg_text = st.session_state.import_message
+            if msg_type == "error":
+                st.error(msg_text)
+            elif msg_type == "warning":
+                st.warning(msg_text)
+            else:
+                st.success(msg_text)
+            st.session_state.import_message = None
+
         uploaded_file = st.file_uploader("Excel file", type=["xlsx", "xls"], label_visibility="collapsed", key=st.session_state.file_uploader_key)
 
         if uploaded_file is not None:
             with st.spinner("Importing time cards..."):
                 df = pd.read_excel(uploaded_file)
-                st.dataframe(df)
-                _, missing, added, pay_period, pay_period_start = importTimeCards(df, conn)
+                existing, missing, added, pay_period, pay_period_start = importTimeCards(df, conn)
                 logImport(conn, user["email"], pay_period, pay_period_start,
-                          added, len(_), list(set(missing)))
+                          added, len(existing), list(set(missing)))
                 st.session_state.missing_employees = list(set(missing))
                 st.session_state.missing_employee_idx = 0
                 st.session_state.pending_df = df
                 st.session_state.file_uploader_key += 1
+
+                if added == 0 and existing:
+                    st.session_state.import_message = ("error", f"Upload rejected: all {len(existing)} records already exist for this pay period.")
+                elif existing:
+                    st.session_state.import_message = ("warning", f"Imported {added} records. {len(existing)} already existed and were skipped.")
+                else:
+                    st.session_state.import_message = ("success", f"Successfully imported {added} records.")
+
                 st.rerun()
     ctrl1, ctrl2 = st.columns([1, 1])
     
