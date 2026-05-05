@@ -1,15 +1,12 @@
 import streamlit as st
 import pandas as pd
-import sys
-import os
+import io
 from Controllers.DB import *
-import pyodbc
-from datetime import datetime
 from login import get_auth_url, exchange_code_for_token, render_report
 from Classes import *
 from views import timecard_allocations, approval_report_manager, time_card_report
 from Controllers.timecardAllocationController import *
-import io
+from History.importHistoryController import logImport, getImportHistory
 
 
 # ── Page config (must be first) ───────────────────────────────────────────────
@@ -25,6 +22,15 @@ if "user" not in st.session_state:
 
 if "active_page" not in st.session_state:
     st.session_state.active_page = "Timecard Allocations"
+
+if "missing_employees" not in st.session_state:
+    st.session_state.missing_employees = []
+if "missing_employee_idx" not in st.session_state:
+    st.session_state.missing_employee_idx = 0
+if "pending_df" not in st.session_state:
+    st.session_state.pending_df = None
+if "file_uploader_key" not in st.session_state:
+    st.session_state.file_uploader_key = 0
 
 code = st.query_params.get("code")
 
@@ -55,8 +61,6 @@ if st.session_state.user is None:
 # ── DB Connection ─────────────────────────────────────────────────────────────
 conn = get_connection()
 user = st.session_state.user
-
-
 
 # ── Logout Handler ────────────────────────────────────────────────────────────
 if st.query_params.get("logout") == "true":
@@ -253,9 +257,51 @@ st.markdown(f"""
 st.divider()
 
 login = setLoggedInUser(conn, user)
-
-#isManager = login[0].isManager()
 isManager = True
+
+@st.dialog("New Employee Found in Import")
+def new_employee_dialog():
+    missing = st.session_state.missing_employees
+    idx = st.session_state.missing_employee_idx
+    code = missing[idx]
+
+    st.write(f"Employee **{code}** was found in the import but doesn't exist in the system. ({idx + 1} of {len(missing)})")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        first = st.text_input("First Name")
+        email = st.text_input("Work Email")
+        dept = st.text_input("Department Code")
+    with col_b:
+        last = st.text_input("Last Name")
+        hours = st.number_input("Pay Period Hours", min_value=0.0, value=80.0, step=0.5)
+
+    btn1, btn2 = st.columns(2)
+    with btn1:
+        if st.button("Save & Continue", type="primary", use_container_width=True):
+            run_query(conn, "EXEC InsertEmployee ?, ?, ?, ?, ?, ?",
+                      [code, email, last, first, dept, hours])
+            st.session_state.missing_employee_idx += 1
+            if st.session_state.missing_employee_idx >= len(missing):
+                st.session_state.missing_employees = []
+                st.session_state.missing_employee_idx = 0
+                if st.session_state.pending_df is not None:
+                    importTimeCards(st.session_state.pending_df, conn)
+                    st.session_state.pending_df = None
+            st.rerun()
+    with btn2:
+        if st.button("Skip", use_container_width=True):
+            st.session_state.missing_employee_idx += 1
+            if st.session_state.missing_employee_idx >= len(missing):
+                st.session_state.missing_employees = []
+                st.session_state.missing_employee_idx = 0
+                if st.session_state.pending_df is not None:
+                    importTimeCards(st.session_state.pending_df, conn)
+                    st.session_state.pending_df = None
+            st.rerun()
+
+if st.session_state.missing_employees and isManager:
+    new_employee_dialog()
 
 # ── Two-Column Layout ─────────────────────────────────────────────────────────
 sidebar_col, main_col = st.columns([1, 5])
@@ -263,7 +309,6 @@ sidebar_col, main_col = st.columns([1, 5])
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with sidebar_col:
     with st.expander("Employee Self Service", expanded=True):
-        #limit page choices depended on if manager 
         pages = [
         "Timecard Allocations",
         "Approval Report Manager",
@@ -281,18 +326,21 @@ with sidebar_col:
                     st.session_state.active_page = page
                     st.rerun()
 
-    if "file_uploader_key" not in st.session_state:
-        st.session_state.file_uploader_key = 0
-    if isManager: 
+    if isManager:
         st.markdown('<p class="sidebar-label">Import</p>', unsafe_allow_html=True)
-        
+
         uploaded_file = st.file_uploader("Excel file", type=["xlsx", "xls"], label_visibility="collapsed", key=st.session_state.file_uploader_key)
 
         if uploaded_file is not None:
             with st.spinner("Importing time cards..."):
                 df = pd.read_excel(uploaded_file)
                 st.dataframe(df)
-                importTimeCards(df, conn)
+                _, missing, added, pay_period, pay_period_start = importTimeCards(df, conn)
+                logImport(conn, user["email"], pay_period, pay_period_start,
+                          added, len(_), list(set(missing)))
+                st.session_state.missing_employees = list(set(missing))
+                st.session_state.missing_employee_idx = 0
+                st.session_state.pending_df = df
                 st.session_state.file_uploader_key += 1
                 st.rerun()
     ctrl1, ctrl2 = st.columns([1, 1])
