@@ -391,8 +391,8 @@ def getFundsByEmployee(conn, employee_code):
     df = run_query(conn, """
         SELECT DISTINCT F.FundCode, F.FundDescription
         FROM Funds AS F
-        LEFT JOIN dbo.vw_EmployeeFundCodes AS E ON F.FundCode = E.Fund_Code
-        WHERE E.EE_Code = ?
+        LEFT JOIN dbo.vw_EmployeeFundCodes AS E ON F.FundCode = E.FundCode
+        WHERE E.EmployeeCode = ?
     """, [employee_code])
     return (df["FundCode"] + ":" + df["FundDescription"]).tolist()
 
