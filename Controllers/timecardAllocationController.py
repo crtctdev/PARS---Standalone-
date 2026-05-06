@@ -89,7 +89,7 @@ def importTimeCards(df, conn):
         processed.add((employeecode, date))
 
         hours_result = run_query(conn, """
-            Select PayPeriodHours From EmployeeInformation Where EmployeeCode = ?
+            Select PayPeriodHours From dbo.vw_EmployeeInformation Where EmployeeCode = ?
         """, [employeecode])
         try:
             if hours_result is None or hours_result.empty:
@@ -151,7 +151,7 @@ def importTimeCards(df, conn):
         employeecode = str(employeecode).strip()
 
         hours_result = run_query(conn, """
-            Select PayPeriodHours From EmployeeInformation Where EmployeeCode = ?
+            Select PayPeriodHours From dbo.vw_EmployeeInformation Where EmployeeCode = ?
         """, [employeecode])
         try:
             if hours_result is None or hours_result.empty:
@@ -222,7 +222,7 @@ def autoAllocateSalariedEmployees(conn, pay_period_str, pay_period_start_str, em
             continue
 
         hours_result = run_query(conn, """
-            SELECT PayPeriodHours FROM dbo.EmployeeInformation WHERE EmployeeCode = ?
+            SELECT PayPeriodHours FROM dbo.vw_EmployeeInformation WHERE EmployeeCode = ?
         """, [employeecode])
         if hours_result is None or hours_result.empty:
             continue
@@ -391,7 +391,7 @@ def getFundsByEmployee(conn, employee_code):
     df = run_query(conn, """
         SELECT DISTINCT F.FundCode, F.FundDescription
         FROM Funds AS F
-        LEFT JOIN EmployeeFundMatch AS E ON F.FundCode = E.Fund_Code
+        LEFT JOIN dbo.vw_EmployeeFundCodes AS E ON F.FundCode = E.Fund_Code
         WHERE E.EE_Code = ?
     """, [employee_code])
     return (df["FundCode"] + ":" + df["FundDescription"]).tolist()

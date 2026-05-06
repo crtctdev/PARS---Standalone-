@@ -272,7 +272,7 @@ else:
     isManager = login[0].isManager()
 
 if st.session_state.db_employee_codes is None:
-    emp_df = run_query(conn, "SELECT EmployeeCode FROM dbo.EmployeeInformation")
+    emp_df = run_query(conn, "SELECT EmployeeCode FROM dbo.vw_EmployeeInformation")
     st.session_state.db_employee_codes = emp_df["EmployeeCode"].tolist() if emp_df is not None and not emp_df.empty else []
 
 
@@ -314,7 +314,7 @@ def new_employee_dialog():
             for fund_option in selected_funds:
                 fund_code, fund_desc = fund_option.split(": ", 1)
                 run_query(conn, """
-                    INSERT INTO dbo.EmployeeFundMatch (EE_Code, Fund_Code, Fund_Code_Desc)
+                    INSERT INTO CRT_INFO.dbo.ParentEmployeeInformation (EE_Code, Fund_Code, Fund_Code_Desc)
                     VALUES (?, ?, ?)
                 """, [code, fund_code, fund_desc])
             _advance()
