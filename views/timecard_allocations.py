@@ -1,11 +1,11 @@
 import streamlit as st
 from Controllers.DB import *
-from Controllers.timecardAllocationController import * 
-from Classes import * 
+from Controllers.timecardAllocationController import *
+from Classes import *
+
+
 def render(conn, user, login):
     st.title("Timecard Allocations")
-    # Controls Row
-    
     isManager = login[0].isManager()
     ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([2, 3, 2, 2])
     
@@ -90,8 +90,6 @@ def render(conn, user, login):
                     if st.button(arrow, key=f"btn_{schedule_id}"):
                         st.session_state[key] = not st.session_state[key]
                         st.rerun()
-                #This is for testing purposes
-                #second change for kg
                 col2.write(row["Date"])
                 col3.write(row["PayType"])
                 col4.write(row["TotalHours"])

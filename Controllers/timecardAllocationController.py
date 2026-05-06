@@ -5,6 +5,18 @@ from Controllers.DB import *
 
 
 def getPayPeriods(conn):
+    """
+    Retrieves all distinct pay periods from the Time_Card table, formatted for display in the UI.
+
+    Pay periods are stored as YYYYMMDD integers in the database and are converted to
+    MM/DD/YYYY strings on the way out for use in Streamlit selectbox components.
+
+    Args:
+        conn (pyodbc.Connection): An active database connection.
+
+    Returns:
+        list[str]: A list of pay period strings in MM/DD/YYYY format, ordered ascending.
+    """
     payPeriods = run_query(conn, """
         SELECT DISTINCT PayPeriod FROM Time_Card ORDER BY PayPeriod ASC
     """)["PayPeriod"].astype(str).tolist()
@@ -12,6 +24,35 @@ def getPayPeriods(conn):
 
 
 def importTimeCards(df, conn):
+    """
+    Processes a timecard export DataFrame and persists the results to the Schedule and Time_Card tables.
+
+    The pay period is determined automatically by matching the maximum date in the file against
+    vw_PayPeriods. If a match is found, the DB-defined period boundaries are used; otherwise the
+    file's own date range is used as a fallback.
+
+    For each employee and date combination, non-regular earn codes (e.g. OT, sick) are inserted
+    as separate Schedule entries. Regular hours are calculated as the remainder and inserted as a
+    Regular entry. After processing all punched days, any weekday within the pay period that had
+    no punch data is backfilled with a full Regular day at the employee's standard PayPeriodHours.
+
+    Employees not found in EmployeeInformation or with zero PayPeriodHours are flagged as missing
+    and excluded from the import. Records that already exist in the Schedule table are skipped and
+    tracked separately.
+
+    Args:
+        df (pd.DataFrame): A DataFrame parsed from the uploaded Excel file. Must contain
+                           EECode, OutPunchTime, EarnHours, and EarnCode columns.
+        conn (pyodbc.Connection): An active database connection.
+
+    Returns:
+        tuple: (existing_records, missing_employees, records_added, pay_period_str, pay_period_start_str)
+            - existing_records (list[str]): Schedule IDs that were skipped because they already exist.
+            - missing_employees (list[str]): Employee codes not found in EmployeeInformation.
+            - records_added (int): Number of new Schedule rows successfully inserted.
+            - pay_period_str (str): The resolved pay period end date in YYYYMMDD format.
+            - pay_period_start_str (str): The resolved pay period start date in YYYYMMDD format.
+    """
     existing_records = []
     missing_employees = []
     records_added = 0
@@ -48,7 +89,7 @@ def importTimeCards(df, conn):
         processed.add((employeecode, date))
 
         hours_result = run_query(conn, """
-            Select PayPeriodHours From EmployeeInformation Where EmployeeCode = ?
+            Select PayPeriodHours From dbo.vw_EmployeeInformation Where EmployeeCode = ?
         """, [employeecode])
         try:
             if hours_result is None or hours_result.empty:
@@ -110,7 +151,7 @@ def importTimeCards(df, conn):
         employeecode = str(employeecode).strip()
 
         hours_result = run_query(conn, """
-            Select PayPeriodHours From EmployeeInformation Where EmployeeCode = ?
+            Select PayPeriodHours From dbo.vw_EmployeeInformation Where EmployeeCode = ?
         """, [employeecode])
         try:
             if hours_result is None or hours_result.empty:
@@ -142,7 +183,95 @@ def importTimeCards(df, conn):
     return existing_records, missing_employees, records_added, max_date_str, min_date_str
 
 
+def autoAllocateSalariedEmployees(conn, pay_period_str, pay_period_start_str, employee_codes):
+    """
+    Ensures every provided salaried employee has a complete Regular schedule for the given pay period.
+
+    Called after each import to cover employees who were absent from the uploaded file. For each
+    employee code provided, the function checks whether a full set of 10 business day Regular
+    Schedule entries already exists for the pay period. If so, the employee is skipped entirely.
+    Otherwise, a Time_Card is created if one does not exist, and any missing business day entries
+    are inserted as Regular records at the employee's standard PayPeriodHours with 100% allocation.
+
+    Employees without a record in EmployeeInformation or with PayPeriodHours of zero are skipped.
+
+    Args:
+        conn (pyodbc.Connection): An active database connection.
+        pay_period_str (str): The pay period end date in YYYYMMDD format.
+        pay_period_start_str (str): The pay period start date in YYYYMMDD format.
+        employee_codes (list[str]): Employee codes to evaluate for auto-allocation.
+
+    Returns:
+        list[str]: Employee codes for which at least one new Schedule row was inserted.
+    """
+    pay_period_dates = pd.date_range(
+        start=pd.to_datetime(pay_period_start_str, format='%Y%m%d'),
+        periods=10, freq='B'
+    )
+    auto_allocated = []
+
+    for employeecode in employee_codes:
+        existing_count_df = run_query(conn, """
+            SELECT COUNT(*) AS cnt
+            FROM dbo.Schedule S
+            JOIN dbo.Time_Card T ON T.TimeCardID = S.TimeCardID
+            WHERE S.EmployeeCode = ? AND T.PayPeriod = ? AND S.PayType = 'Regular'
+        """, [employeecode, pay_period_str])
+        existing_count = existing_count_df.iloc[0, 0] if existing_count_df is not None and not existing_count_df.empty else 0
+        if existing_count >= len(pay_period_dates):
+            continue
+
+        hours_result = run_query(conn, """
+            SELECT PayPeriodHours FROM dbo.vw_EmployeeInformation WHERE EmployeeCode = ?
+        """, [employeecode])
+        if hours_result is None or hours_result.empty:
+            continue
+        hoursAllowed = hours_result.iloc[0, 0]
+        if pd.isna(hoursAllowed) or hoursAllowed == 0:
+            continue
+
+        timeCardID = f"TCARD{employeecode}{pay_period_str}"
+        existing_card = run_query(conn, "SELECT * FROM dbo.Time_Card WHERE TimeCardID = ?", [timeCardID])
+        if existing_card is None or existing_card.empty:
+            createTimeCard(pay_period_str, employeecode, timeCardID, 0, pay_period_start_str, conn)
+
+        days_inserted = 0
+        for date in pay_period_dates:
+            schedualID = f"SCH{employeecode}{date.strftime('%Y%m%d')}REG"
+            existing_sch = run_query(conn, "SELECT * FROM dbo.Schedule WHERE ScheduleID = ?", [schedualID])
+            if existing_sch is not None and not existing_sch.empty:
+                continue
+            run_query(conn, """
+                INSERT INTO dbo.Schedule (ScheduleID, EmployeeCode, Date, PayType, TotalHours, Percentage, TimeCardID)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, [schedualID, employeecode, date.strftime('%Y%m%d'), 'Regular', hoursAllowed, 100.0, timeCardID])
+            days_inserted += 1
+
+        if days_inserted > 0:
+            auto_allocated.append(employeecode)
+
+    return auto_allocated
+
+
 def createTimeCard(payPeriod, EmployeeCode, TimeCardID, Approved, MinDate, conn):
+    """
+    Inserts a new Time_Card record into the database.
+
+    The TimeCardID is expected to follow the convention TCARD{EmployeeCode}{YYYYMMDD},
+    making it directly derivable without requiring a separate lookup. Approval is
+    typically initialized to 0 and updated later through the approval workflow.
+
+    Args:
+        payPeriod (str): The pay period end date in YYYYMMDD format.
+        EmployeeCode (str): The employee's unique identifier.
+        TimeCardID (str): The constructed Time_Card primary key.
+        Approved (int): Initial approval state; 0 for unapproved, 1 for approved.
+        MinDate (str): The pay period start date in YYYYMMDD format.
+        conn (pyodbc.Connection): An active database connection.
+
+    Returns:
+        None
+    """
     return run_query(conn, """
         INSERT INTO dbo.Time_Card (TimeCardID, EmployeeCode, PayPeriod, Approval, PayPeriodStart)
         VALUES (?, ?, ?, ?, ?)
@@ -150,6 +279,20 @@ def createTimeCard(payPeriod, EmployeeCode, TimeCardID, Approved, MinDate, conn)
 
 
 def getSchedule(conn, EmployeeCode, PayPeriod):
+    """
+    Retrieves all Schedule entries for a given employee and pay period, ordered by date ascending.
+
+    The pay period is accepted in MM/DD/YYYY format as provided by the UI and is converted
+    to YYYYMMDD internally before querying. Joins against Time_Card to filter by pay period.
+
+    Args:
+        conn (pyodbc.Connection): An active database connection.
+        EmployeeCode (str): The employee's unique identifier.
+        PayPeriod (str): The pay period end date in MM/DD/YYYY format.
+
+    Returns:
+        pd.DataFrame: Schedule rows including ScheduleID, Date, PayType, TotalHours, Percentage, and PayPeriod.
+    """
     parts = PayPeriod.split("/")
     period = f"{parts[2]}{parts[0]}{parts[1]}"
     return run_query(conn, """
@@ -162,6 +305,21 @@ def getSchedule(conn, EmployeeCode, PayPeriod):
 
 
 def getEmployeesByPayPeriod(conn, pay_period, user):
+    """
+    Retrieves the list of employees accessible to the logged-in user for a given pay period.
+
+    Delegates to fn_GetEmployeesByManagerEmail, which scopes results to the manager's department.
+    Non-manager employees will only see themselves. The pay period is converted from MM/DD/YYYY
+    to YYYYMMDD before the query.
+
+    Args:
+        conn (pyodbc.Connection): An active database connection.
+        pay_period (str): The pay period end date in MM/DD/YYYY format.
+        user (dict): The authenticated user object containing an 'email' key.
+
+    Returns:
+        list[Employee]: Employee objects visible to the current user for the specified pay period.
+    """
     parts = pay_period.split("/")
     period = f"{parts[2]}{parts[0]}{parts[1]}"
     df = run_query(conn, "SELECT * FROM dbo.fn_GetEmployeesByManagerEmail(?, ?);", [user['email'], period])
@@ -177,6 +335,20 @@ def getEmployeesByPayPeriod(conn, pay_period, user):
 
 
 def getRecords(conn, schedule_id):
+    """
+    Retrieves all allocation records associated with a given Schedule entry.
+
+    These records represent the Task, Fund, and Hours breakdown that employees
+    or managers fill in against each scheduled day.
+
+    Args:
+        conn (pyodbc.Connection): An active database connection.
+        schedule_id (str): The ScheduleID to fetch records for.
+
+    Returns:
+        pd.DataFrame | None: A DataFrame with columns Task, Fund, Hours, and ID,
+                             or None if no records exist.
+    """
     return run_query(conn, """
         SELECT Task, Fund, Hours, ID
         FROM dbo.Record
@@ -185,21 +357,63 @@ def getRecords(conn, schedule_id):
 
 
 def getTasks(conn):
+    """
+    Retrieves all available activity codes and descriptions from the Activities table.
+
+    Returns each entry as a 'Code:Description' string, which is the format expected
+    by the Task selectbox column in the allocation data editor.
+
+    Args:
+        conn (pyodbc.Connection): An active database connection.
+
+    Returns:
+        list[str]: Activity options in 'Code:Description' format.
+    """
     df = run_query(conn, "SELECT Code, Description FROM dbo.[Activities]")
     return (df["Code"] + ":" + df["Description"]).tolist()
 
 
 def getFundsByEmployee(conn, employee_code):
+    """
+    Retrieves the funds associated with a specific employee.
+
+    Joins EmployeeFundMatch against the Funds table to resolve descriptions and
+    returns each fund as a 'FundCode:FundDescription' string for use in the Fund
+    selectbox column in the allocation data editor.
+
+    Args:
+        conn (pyodbc.Connection): An active database connection.
+        employee_code (str): The employee's unique identifier.
+
+    Returns:
+        list[str]: Fund options in 'FundCode:FundDescription' format.
+    """
     df = run_query(conn, """
         SELECT DISTINCT F.FundCode, F.FundDescription
         FROM Funds AS F
-        LEFT JOIN EmployeeFundMatch AS E ON F.FundCode = E.Fund_Code
+        LEFT JOIN dbo.vw_EmployeeFundCodes AS E ON F.FundCode = E.Fund_Code
         WHERE E.EE_Code = ?
     """, [employee_code])
     return (df["FundCode"] + ":" + df["FundDescription"]).tolist()
 
 
 def saveAllocations(conn, schedule_id, edited_df):
+    """
+    Persists allocation rows from the UI data editor to the Record table.
+
+    Rows without an ID are treated as new and receive an INSERT with a generated identifier.
+    Rows with an existing ID are updated in place. Rows where Hours is NaN or all columns
+    are null are skipped. Returns the DataFrame with any newly generated IDs filled in.
+
+    Args:
+        conn (pyodbc.Connection): An active database connection.
+        schedule_id (str): The ScheduleID these records belong to.
+        edited_df (pd.DataFrame): The edited DataFrame from the Streamlit data editor,
+                                  containing ID, Task, Fund, and Hours columns.
+
+    Returns:
+        pd.DataFrame: The updated DataFrame with ID values populated for newly inserted rows.
+    """
     records_size = run_query(conn, "SELECT COUNT(*) AS count FROM dbo.Record").iloc[0, 0]
     edited_df = edited_df.dropna(how="all").copy()
     edited_df["Hours"] = pd.to_numeric(edited_df["Hours"], errors="coerce")
@@ -227,10 +441,41 @@ def saveAllocations(conn, schedule_id, edited_df):
 
 
 def deleteRecord(conn, recordID):
+    """
+    Deletes a Record entry from the database by its ID.
+
+    Uses a LIKE pattern match to accommodate how IDs may be formatted when passed in.
+
+    Args:
+        conn (pyodbc.Connection): An active database connection.
+        recordID (int): The ID of the record to delete.
+
+    Returns:
+        None
+    """
     run_query(conn, "DELETE FROM Record WHERE ID LIKE ?", [f"%{recordID}%"])
 
 
 def changeTimecardState(emplyeeCode, approverCode, payPeriod, conn, approval, acknowledged):
+    """
+    Updates the approval and acknowledgement state of a Time_Card record.
+
+    Called whenever either the Manager Approval or Employee Acknowledgement checkbox is toggled
+    in the UI. Stamps today's date on both ApprovedDate and AcknowledgedDate at the time of the
+    update. This function is only invoked when a value has actually changed, so no additional
+    change detection is needed here.
+
+    Args:
+        emplyeeCode (str): The employee code whose Time_Card is being updated.
+        approverCode (str): The employee code of the user performing the action.
+        payPeriod (str): The pay period end date in MM/DD/YYYY format.
+        conn (pyodbc.Connection): An active database connection.
+        approval (bool | int): The new approval state.
+        acknowledged (bool | int): The new acknowledgement state.
+
+    Returns:
+        None
+    """
     parts = payPeriod.split("/")
     period = f"{parts[2]}{parts[0]}{parts[1]}"
     timeCardID = f'TCARD{emplyeeCode}{period}'
@@ -243,6 +488,20 @@ def changeTimecardState(emplyeeCode, approverCode, payPeriod, conn, approval, ac
 
 
 def checkState(employeeCode, payPeriod, conn):
+    """
+    Retrieves the current approval and acknowledgement state for an employee's Time_Card.
+
+    Returns (0, 0) if no Time_Card exists for the given employee and pay period,
+    ensuring the UI checkboxes initialize to unchecked by default.
+
+    Args:
+        employeeCode (str): The employee's unique identifier.
+        payPeriod (str): The pay period end date in MM/DD/YYYY format.
+        conn (pyodbc.Connection): An active database connection.
+
+    Returns:
+        tuple[int, int]: A tuple of (approval, acknowledged), each 0 or 1.
+    """
     parts = payPeriod.split("/")
     period = f"{parts[2]}{parts[0]}{parts[1]}"
     timeCardID = f'TCARD{employeeCode}{period}'

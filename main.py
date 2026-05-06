@@ -33,6 +33,8 @@ if "file_uploader_key" not in st.session_state:
     st.session_state.file_uploader_key = 0
 if "import_message" not in st.session_state:
     st.session_state.import_message = None
+if "db_employee_codes" not in st.session_state:
+    st.session_state.db_employee_codes = None
 
 code = st.query_params.get("code")
 
@@ -266,9 +268,14 @@ if not login:
 
 if login[0].work_email == "mapheyp@crtct.org":
     isManager = True
-else :
+else:
     isManager = login[0].isManager()
-#Flag For Testing
+
+if st.session_state.db_employee_codes is None:
+    emp_df = run_query(conn, "SELECT EmployeeCode FROM dbo.vw_EmployeeInformation")
+    st.session_state.db_employee_codes = emp_df["EmployeeCode"].tolist() if emp_df is not None and not emp_df.empty else []
+
+
 @st.dialog("New Employee Found in Import")
 def new_employee_dialog():
     missing = st.session_state.missing_employees
@@ -307,7 +314,7 @@ def new_employee_dialog():
             for fund_option in selected_funds:
                 fund_code, fund_desc = fund_option.split(": ", 1)
                 run_query(conn, """
-                    INSERT INTO dbo.EmployeeFundMatch (EE_Code, Fund_Code, Fund_Code_Desc)
+                    INSERT INTO CRT_INFO.dbo.ParentEmployeeInformation (EE_Code, Fund_Code, Fund_Code_Desc)
                     VALUES (?, ?, ?)
                 """, [code, fund_code, fund_desc])
             _advance()
@@ -361,7 +368,17 @@ with sidebar_col:
         if uploaded_file is not None:
             with st.spinner("Importing time cards..."):
                 df = pd.read_excel(uploaded_file)
+                required_cols = {"EECode", "OutPunchTime", "EarnHours", "EarnCode"}
+                if df.empty or not required_cols.issubset(df.columns):
+                    st.session_state.import_message = ("error", "Upload rejected: file is empty or missing required columns (EECode, OutPunchTime, EarnHours, EarnCode).")
+                    st.session_state.file_uploader_key += 1
+                    st.rerun()
                 existing, missing, added, pay_period, pay_period_start = importTimeCards(df, conn)
+
+                import_codes = [str(c).strip() for c in df["EECode"].unique()]
+                unrepresented = [c for c in st.session_state.db_employee_codes if c not in import_codes]
+                auto_allocated = autoAllocateSalariedEmployees(conn, pay_period, pay_period_start, unrepresented)
+
                 logImport(conn, user["email"], pay_period, pay_period_start,
                           added, len(existing), list(set(missing)))
                 st.session_state.missing_employees = list(set(missing))
@@ -369,12 +386,13 @@ with sidebar_col:
                 st.session_state.pending_df = df
                 st.session_state.file_uploader_key += 1
 
+                auto_msg = f" Auto-allocated {len(auto_allocated)} salaried employee(s)." if auto_allocated else ""
                 if added == 0 and existing:
                     st.session_state.import_message = ("error", f"Upload rejected: all {len(existing)} records already exist for this pay period.")
                 elif existing:
-                    st.session_state.import_message = ("warning", f"Imported {added} records. {len(existing)} already existed and were skipped.")
+                    st.session_state.import_message = ("warning", f"Imported {added} records. {len(existing)} already existed and were skipped.{auto_msg}")
                 else:
-                    st.session_state.import_message = ("success", f"Successfully imported {added} records.")
+                    st.session_state.import_message = ("success", f"Successfully imported {added} records.{auto_msg}")
 
                 st.rerun()
     ctrl1, ctrl2 = st.columns([1, 1])
@@ -395,14 +413,11 @@ with sidebar_col:
             )
      
         if st.button("Download Export", use_container_width=True):
-            # Run your query
-            print(pay_period_start , pay_period_end)
             df = run_query(conn,
                 "SELECT * FROM dbo.fn_EmployeeTaskFundHours(?, ?)",
                 [pay_period_start, pay_period_end]
             )
 
-            # Write to in-memory Excel file
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
                 df.to_excel(writer, index=False, sheet_name="Export")
@@ -422,11 +437,9 @@ with main_col:
         case "Approval Report Manager":
             approval_report_manager.render(conn, user, login)
         case "Time Card Report":
-            
             employee_code = login[0].employee_code
             managing_dept = login[0].managing_department
             dept_code = login[0].dept_code
-            print(isManager, employee_code, managing_dept, dept_code)  # debug
             if not isManager:
                 render_report(f"Invoked_x0020_function/EmployeeCode eq '{employee_code}'")
             else:
