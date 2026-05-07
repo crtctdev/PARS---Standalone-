@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+from datetime import datetime
 from Controllers.DB import *
 from login import get_auth_url, exchange_code_for_token, render_report
 from Classes import *
@@ -23,12 +24,6 @@ if "user" not in st.session_state:
 if "active_page" not in st.session_state:
     st.session_state.active_page = "Timecard Allocations"
 
-if "missing_employees" not in st.session_state:
-    st.session_state.missing_employees = []
-if "missing_employee_idx" not in st.session_state:
-    st.session_state.missing_employee_idx = 0
-if "pending_df" not in st.session_state:
-    st.session_state.pending_df = None
 if "file_uploader_key" not in st.session_state:
     st.session_state.file_uploader_key = 0
 if "import_message" not in st.session_state:
@@ -276,57 +271,6 @@ if st.session_state.db_employee_codes is None:
     st.session_state.db_employee_codes = emp_df["EmployeeCode"].tolist() if emp_df is not None and not emp_df.empty else []
 
 
-@st.dialog("New Employee Found in Import")
-def new_employee_dialog():
-    missing = st.session_state.missing_employees
-    idx = st.session_state.missing_employee_idx
-    code = missing[idx]
-
-    st.write(f"Employee **{code}** was found in the import but doesn't exist in the system. ({idx + 1} of {len(missing)})")
-
-    col_a, col_b = st.columns(2)
-    with col_a:
-        first = st.text_input("First Name")
-        email = st.text_input("Work Email")
-        dept = st.text_input("Department Code")
-    with col_b:
-        last = st.text_input("Last Name")
-        hours = st.number_input("Pay Period Hours", min_value=0.0, value=7.0, step=0.5)
-
-    funds_df = run_query(conn, "SELECT FundCode, FundDescription FROM dbo.Funds ORDER BY FundCode")
-    fund_options = (funds_df["FundCode"] + ": " + funds_df["FundDescription"]).tolist()
-    selected_funds = st.multiselect("Associated Funds", options=fund_options)
-
-    def _advance():
-        st.session_state.missing_employee_idx += 1
-        if st.session_state.missing_employee_idx >= len(missing):
-            st.session_state.missing_employees = []
-            st.session_state.missing_employee_idx = 0
-            if st.session_state.pending_df is not None:
-                importTimeCards(st.session_state.pending_df, conn)
-                st.session_state.pending_df = None
-
-    btn1, btn2 = st.columns(2)
-    with btn1:
-        if st.button("Save & Continue", type="primary", use_container_width=True):
-            run_query(conn, "EXEC InsertEmployee ?, ?, ?, ?, ?, ?",
-                      [code, email, last, first, dept, hours])
-            for fund_option in selected_funds:
-                fund_code, fund_desc = fund_option.split(": ", 1)
-                run_query(conn, """
-                    INSERT INTO CRT_INFO.dbo.ParentEmployeeInformation (EE_Code, Fund_Code, Fund_Code_Desc)
-                    VALUES (?, ?, ?)
-                """, [code, fund_code, fund_desc])
-            _advance()
-            st.rerun()
-    with btn2:
-        if st.button("Skip", use_container_width=True):
-            _advance()
-            st.rerun()
-
-if st.session_state.missing_employees and isManager:
-    new_employee_dialog()
-
 # ── Two-Column Layout ─────────────────────────────────────────────────────────
 sidebar_col, main_col = st.columns([1, 5])
 
@@ -381,9 +325,9 @@ with sidebar_col:
 
                 logImport(conn, user["email"], pay_period, pay_period_start,
                           added, len(existing), list(set(missing)))
-                st.session_state.missing_employees = list(set(missing))
-                st.session_state.missing_employee_idx = 0
-                st.session_state.pending_df = df
+                if missing:
+                    with open("missing_employees.log", "a") as f:
+                        f.write(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] Pay Period: {pay_period} | Missing: {', '.join(set(missing))}\n")
                 st.session_state.file_uploader_key += 1
 
                 auto_msg = f" Auto-allocated {len(auto_allocated)} salaried employee(s)." if auto_allocated else ""
