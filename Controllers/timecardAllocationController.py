@@ -57,15 +57,15 @@ def importTimeCards(df, conn):
     missing_employees = []
     records_added = 0
 
-    df["Date"] = pd.to_datetime(df["OutPunchTime"], errors='coerce').dt.normalize()
+    df["Date"] = pd.to_datetime(df["InPunchTime"], errors='coerce').dt.normalize()
     max_date = df["Date"].max()
     min_date = df["Date"].min()
 
     period_match = run_query(conn, """
         SELECT PayPeriod, PayPeriodStart
         FROM dbo.vw_PayPeriods
-        WHERE ? BETWEEN PayPeriodStart AND PayPeriod
-    """, [max_date.strftime('%Y%m%d')])
+        WHERE ? > PayPeriodStart AND ? <= PayPeriod
+    """, [max_date.strftime('%Y%m%d'), max_date.strftime('%Y%m%d')])
 
     if not period_match.empty:
         max_date = pd.to_datetime(str(period_match.iloc[0]["PayPeriod"]), format='%Y%m%d')
@@ -75,32 +75,58 @@ def importTimeCards(df, conn):
     max_date_str = max_date.strftime('%Y%m%d')
     min_date_str = min_date.strftime('%Y%m%d')
 
-    for employeecode in df["EECode"].unique():
-        employeecode = str(employeecode).strip()
-        timeCardID = f"TCARD{employeecode}{max_date_str}"
-        existing = run_query(conn, "SELECT * FROM dbo.Time_Card WHERE TimeCardID = ?", [timeCardID])
-        if existing.empty:
-            createTimeCard(max_date_str, employeecode, timeCardID, 0, min_date_str, conn)
+    employee_codes = [str(c).strip() for c in df["EECode"].unique()]
+
+    # Bulk fetch PayPeriodHours for all employees in one query
+    placeholders = ','.join(['?' for _ in employee_codes])
+    hours_df = run_query(conn, f"SELECT EmployeeCode, PayPeriodHours FROM dbo.vw_EmployeeInformation WHERE EmployeeCode IN ({placeholders})", employee_codes)
+    hours_map = {}
+    if hours_df is not None and not hours_df.empty:
+        hours_map = {str(r["EmployeeCode"]).strip(): r["PayPeriodHours"] for _, r in hours_df.iterrows()}
+
+    # Bulk fetch all earn code descriptions in one query
+    earn_df = run_query(conn, "SELECT Typecode, Typedesc FROM dbo.PaycomEarnCodes")
+    earn_code_map = {}
+    if earn_df is not None and not earn_df.empty:
+        earn_code_map = {str(r["Typecode"]).strip(): r["Typedesc"] for _, r in earn_df.iterrows()}
+
+    # Bulk fetch existing TimeCards for this pay period
+    existing_tc_df = run_query(conn, "SELECT TimeCardID FROM dbo.Time_Card WHERE PayPeriod = ?", [max_date_str])
+    existing_timecards = set(existing_tc_df["TimeCardID"].tolist()) if existing_tc_df is not None and not existing_tc_df.empty else set()
+
+    # Bulk fetch existing ScheduleIDs for this pay period
+    existing_sched_df = run_query(conn, """
+        SELECT S.ScheduleID FROM dbo.Schedule S
+        JOIN dbo.Time_Card T ON S.TimeCardID = T.TimeCardID
+        WHERE T.PayPeriod = ?
+    """, [max_date_str])
+    existing_schedule_ids = set(existing_sched_df["ScheduleID"].tolist()) if existing_sched_df is not None and not existing_sched_df.empty else set()
+
+    # Batch insert any missing TimeCards
+    new_timecards = [
+        (f"TCARD{ec}{max_date_str}", ec, max_date_str, 0, min_date_str)
+        for ec in employee_codes
+        if f"TCARD{ec}{max_date_str}" not in existing_timecards
+    ]
+    if new_timecards:
+        cursor = conn.cursor()
+        cursor.executemany(
+            "INSERT INTO dbo.Time_Card (TimeCardID, EmployeeCode, PayPeriod, Approval, PayPeriodStart) VALUES (?, ?, ?, ?, ?)",
+            new_timecards
+        )
+        conn.commit()
 
     processed = set()
+    schedule_rows = []
 
     for (employeecode, date), daydf in df.groupby(["EECode", "Date"]):
         employeecode = str(employeecode).strip()
         processed.add((employeecode, date))
 
-        hours_result = run_query(conn, """
-            Select PayPeriodHours From dbo.vw_EmployeeInformation Where EmployeeCode = ?
-        """, [employeecode])
-        try:
-            if hours_result is None or hours_result.empty:
+        hoursAllowed = hours_map.get(employeecode)
+        if hoursAllowed is None or pd.isna(hoursAllowed) or hoursAllowed == 0:
+            if employeecode not in missing_employees:
                 missing_employees.append(employeecode)
-                continue
-            hoursAllowed = hours_result.iloc[0, 0]
-            if pd.isna(hoursAllowed) or hoursAllowed == 0:
-                missing_employees.append(employeecode)
-                continue
-        except Exception:
-            missing_employees.append(employeecode)
             continue
 
         timeCardID = f"TCARD{employeecode}{max_date_str}"
@@ -110,21 +136,16 @@ def importTimeCards(df, conn):
         for earn_code, earn_group in non_regular.groupby("EarnCode"):
             earn_code = str(earn_code).strip()
             earn_hours = earn_group["EarnHours"].sum()
-
-            pay_df = run_query(conn, "SELECT Typedesc FROM dbo.PaycomEarnCodes WHERE Typecode = ?", [earn_code])
-            pay_type = pay_df.iloc[0, 0] if not pay_df.empty else earn_code
-
+            pay_type = earn_code_map.get(earn_code, earn_code)
             schedualID = f"SCH{employeecode}{date.strftime('%Y%m%d')}{earn_code}"
             percentage = round((earn_hours / hoursAllowed) * 100, 2)
 
-            if not run_query(conn, "SELECT * FROM dbo.Schedule WHERE ScheduleID = ?", [schedualID]).empty:
+            if schedualID in existing_schedule_ids:
                 existing_records.append(schedualID)
                 continue
 
-            run_query(conn, """
-                INSERT INTO dbo.Schedule (ScheduleID, EmployeeCode, Date, PayType, TotalHours, Percentage, TimeCardID)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, [schedualID, employeecode, date.strftime('%Y%m%d'), str(pay_type), earn_hours, percentage, timeCardID])
+            schedule_rows.append((schedualID, employeecode, date.strftime('%Y%m%d'), str(pay_type), earn_hours, percentage, timeCardID))
+            existing_schedule_ids.add(schedualID)
             records_added += 1
 
         regular_hours = daydf["EarnHours"].sum() - non_regular_hours
@@ -136,30 +157,18 @@ def importTimeCards(df, conn):
         schedualID = f"SCH{employeecode}{date.strftime('%Y%m%d')}REG"
         percentage = round((regular_hours / hoursAllowed) * 100, 2)
 
-        if not run_query(conn, "SELECT * FROM dbo.Schedule WHERE ScheduleID = ?", [schedualID]).empty:
+        if schedualID in existing_schedule_ids:
             existing_records.append(schedualID)
             continue
 
-        run_query(conn, """
-            INSERT INTO dbo.Schedule (ScheduleID, EmployeeCode, Date, PayType, TotalHours, Percentage, TimeCardID)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, [schedualID, employeecode, date.strftime('%Y%m%d'), 'Regular', regular_hours, percentage, timeCardID])
+        schedule_rows.append((schedualID, employeecode, date.strftime('%Y%m%d'), 'Regular', regular_hours, percentage, timeCardID))
+        existing_schedule_ids.add(schedualID)
         records_added += 1
 
     # Backfill weekdays with no punch data across the full pay period
-    for employeecode in df["EECode"].unique():
-        employeecode = str(employeecode).strip()
-
-        hours_result = run_query(conn, """
-            Select PayPeriodHours From dbo.vw_EmployeeInformation Where EmployeeCode = ?
-        """, [employeecode])
-        try:
-            if hours_result is None or hours_result.empty:
-                continue
-            hoursAllowed = hours_result.iloc[0, 0]
-            if pd.isna(hoursAllowed) or hoursAllowed == 0:
-                continue
-        except Exception:
+    for employeecode in employee_codes:
+        hoursAllowed = hours_map.get(employeecode)
+        if hoursAllowed is None or pd.isna(hoursAllowed) or hoursAllowed == 0:
             continue
 
         timeCardID = f"TCARD{employeecode}{max_date_str}"
@@ -170,15 +179,22 @@ def importTimeCards(df, conn):
 
             schedualID = f"SCH{employeecode}{date.strftime('%Y%m%d')}REG"
 
-            if not run_query(conn, "SELECT * FROM dbo.Schedule WHERE ScheduleID = ?", [schedualID]).empty:
+            if schedualID in existing_schedule_ids:
                 existing_records.append(schedualID)
                 continue
 
-            run_query(conn, """
-                INSERT INTO dbo.Schedule (ScheduleID, EmployeeCode, Date, PayType, TotalHours, Percentage, TimeCardID)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, [schedualID, employeecode, date.strftime('%Y%m%d'), 'Regular', hoursAllowed, 100.0, timeCardID])
+            schedule_rows.append((schedualID, employeecode, date.strftime('%Y%m%d'), 'Regular', hoursAllowed, 100.0, timeCardID))
+            existing_schedule_ids.add(schedualID)
             records_added += 1
+
+    # Batch insert all Schedule records in one round-trip
+    if schedule_rows:
+        cursor = conn.cursor()
+        cursor.executemany(
+            "INSERT INTO dbo.Schedule (ScheduleID, EmployeeCode, Date, PayType, TotalHours, Percentage, TimeCardID) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            schedule_rows
+        )
+        conn.commit()
 
     return existing_records, missing_employees, records_added, max_date_str, min_date_str
 

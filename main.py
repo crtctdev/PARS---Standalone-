@@ -312,9 +312,9 @@ with sidebar_col:
         if uploaded_file is not None:
             with st.spinner("Importing time cards..."):
                 df = pd.read_excel(uploaded_file)
-                required_cols = {"EECode", "OutPunchTime", "EarnHours", "EarnCode"}
+                required_cols = {"EECode", "InPunchTime", "EarnHours", "EarnCode"}
                 if df.empty or not required_cols.issubset(df.columns):
-                    st.session_state.import_message = ("error", "Upload rejected: file is empty or missing required columns (EECode, OutPunchTime, EarnHours, EarnCode).")
+                    st.session_state.import_message = ("error", "Upload rejected: file is empty or missing required columns (EECode, InPunchTime, EarnHours, EarnCode).")
                     st.session_state.file_uploader_key += 1
                     st.rerun()
                 existing, missing, added, pay_period, pay_period_start = importTimeCards(df, conn)

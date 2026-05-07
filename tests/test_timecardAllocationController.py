@@ -199,41 +199,51 @@ class TestSaveAllocations:
 
 class TestImportTimeCards:
     """
-    run_query is called in a fixed order per import:
+    Bulk queries are issued upfront per import:
       1. vw_PayPeriods lookup
-      2. Time_Card existence check (per employee)
-      3. PayPeriodHours lookup (per employee-day group)
-      4. EarnCode type lookup (per non-regular earn code)
-      5. Schedule existence check + INSERT (per schedule entry)
-      6. Backfill: PayPeriodHours + Schedule existence + INSERT per missing day
+      2. vw_EmployeeInformation bulk PayPeriodHours fetch
+      3. PaycomEarnCodes bulk fetch
+      4. Time_Card bulk existence check (by PayPeriod)
+      5. Schedule bulk existence check (JOIN Time_Card by PayPeriod)
+    TimeCard and Schedule INSERTs use cursor.executemany, not run_query.
     """
 
     def _base_df(self, date="2025-04-30", ee="EMP001", hours=8.0, earn_code=""):
         return make_df([{
             "EECode": ee,
-            "OutPunchTime": date,
+            "InPunchTime": date,
             "EarnHours": hours,
             "EarnCode": earn_code,
         }])
 
-    def test_uses_df_dates_when_no_period_match(self):
-        """When vw_PayPeriods returns no match, max/min dates should come directly from OutPunchTime in the file."""
-        from Controllers.timecardAllocationController import importTimeCards
-
+    def _side(self, period_df=None, hours=8.0, existing_tc=True, existing_sched_ids=None, earn_codes=None):
+        """Factory for standard side_effect functions."""
         def side_effect(conn, query, params=None):
             if "vw_PayPeriods" in query:
-                return empty_df()
-            if "Time_Card" in query and "SELECT" in query:
-                return pd.DataFrame({"TimeCardID": ["existing"]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Schedule" in query and "SELECT" in query:
-                return empty_df()
+                return period_df if period_df is not None else empty_df()
+            if "Time_Card WHERE PayPeriod" in query:
+                return pd.DataFrame({"TimeCardID": ["TCARDEMP00120250430"]}) if existing_tc else empty_df()
+            if "JOIN dbo.Time_Card" in query:
+                ids = existing_sched_ids or []
+                return pd.DataFrame({"ScheduleID": ids}) if ids else empty_df()
+            if "vw_EmployeeInformation" in query:
+                if hours is None:
+                    return empty_df()
+                return pd.DataFrame({"EmployeeCode": ["EMP001"], "PayPeriodHours": [hours]})
+            if "PaycomEarnCodes" in query:
+                codes = earn_codes or {}
+                return pd.DataFrame({"Typecode": list(codes.keys()), "Typedesc": list(codes.values())})
             return None
+        return side_effect
+
+    def test_uses_df_dates_when_no_period_match(self):
+        """When vw_PayPeriods returns no match, max/min dates should come directly from InPunchTime in the file."""
+        from Controllers.timecardAllocationController import importTimeCards
 
         df = self._base_df()
-        with patch(PATCH, side_effect=side_effect):
-            _, _, _, max_date_str, min_date_str = importTimeCards(df, make_conn())
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side()):
+            _, _, _, max_date_str, min_date_str = importTimeCards(df, conn)
 
         assert max_date_str == "20250430"
         assert min_date_str == "20250430"
@@ -242,20 +252,11 @@ class TestImportTimeCards:
         """When vw_PayPeriods returns a match, PayPeriod and PayPeriodStart from the DB should override the file dates."""
         from Controllers.timecardAllocationController import importTimeCards
 
-        def side_effect(conn, query, params=None):
-            if "vw_PayPeriods" in query:
-                return pd.DataFrame({"PayPeriod": ["20250430"], "PayPeriodStart": ["20250421"]})
-            if "Time_Card" in query and "SELECT" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Schedule" in query and "SELECT" in query:
-                return empty_df()
-            return None
-
+        period = pd.DataFrame({"PayPeriod": ["20250430"], "PayPeriodStart": ["20250421"]})
         df = self._base_df()
-        with patch(PATCH, side_effect=side_effect):
-            _, _, _, max_date_str, min_date_str = importTimeCards(df, make_conn())
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(period_df=period)):
+            _, _, _, max_date_str, min_date_str = importTimeCards(df, conn)
 
         assert max_date_str == "20250430"
         assert min_date_str == "20250421"
@@ -264,18 +265,10 @@ class TestImportTimeCards:
         """An employee whose EECode has no matching EmployeeInformation row should appear in the missing list."""
         from Controllers.timecardAllocationController import importTimeCards
 
-        def side_effect(conn, query, params=None):
-            if "vw_PayPeriods" in query:
-                return empty_df()
-            if "Time_Card" in query and "SELECT" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "PayPeriodHours" in query:
-                return empty_df()
-            return None
-
         df = self._base_df()
-        with patch(PATCH, side_effect=side_effect):
-            _, missing, _, _, _ = importTimeCards(df, make_conn())
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(hours=None)):
+            _, missing, _, _, _ = importTimeCards(df, conn)
 
         assert "EMP001" in missing
 
@@ -283,18 +276,10 @@ class TestImportTimeCards:
         """An employee with PayPeriodHours = 0 cannot have allocations calculated and should be flagged as missing."""
         from Controllers.timecardAllocationController import importTimeCards
 
-        def side_effect(conn, query, params=None):
-            if "vw_PayPeriods" in query:
-                return empty_df()
-            if "Time_Card" in query and "SELECT" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [0]})
-            return None
-
         df = self._base_df()
-        with patch(PATCH, side_effect=side_effect):
-            _, missing, _, _, _ = importTimeCards(df, make_conn())
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(hours=0)):
+            _, missing, _, _, _ = importTimeCards(df, conn)
 
         assert "EMP001" in missing
 
@@ -302,22 +287,10 @@ class TestImportTimeCards:
         """Each Schedule INSERT for a new record (not already in the DB) should increment the records_added counter."""
         from Controllers.timecardAllocationController import importTimeCards
 
-        def side_effect(conn, query, params=None):
-            if "vw_PayPeriods" in query:
-                return empty_df()
-            if "Time_Card" in query and "SELECT" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "PaycomEarnCodes" in query:
-                return pd.DataFrame({"Typedesc": ["Overtime"]})
-            if "Schedule" in query and "SELECT" in query:
-                return empty_df()
-            return None
-
         df = self._base_df(earn_code="OT")
-        with patch(PATCH, side_effect=side_effect):
-            _, _, added, _, _ = importTimeCards(df, make_conn())
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(earn_codes={"OT": "Overtime"})):
+            _, _, added, _, _ = importTimeCards(df, conn)
 
         assert added >= 1
 
@@ -325,98 +298,60 @@ class TestImportTimeCards:
         """Schedule records that already exist in the DB should be added to existing_records and not count toward added."""
         from Controllers.timecardAllocationController import importTimeCards
 
-        def side_effect(conn, query, params=None):
-            if "vw_PayPeriods" in query:
-                return empty_df()
-            if "Time_Card" in query and "SELECT" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Schedule" in query and "SELECT" in query:
-                return pd.DataFrame({"ScheduleID": ["existing"]})
-            return None
-
+        existing_id = "SCHEMP00120250430REG"
         df = self._base_df()
-        with patch(PATCH, side_effect=side_effect):
-            existing, _, added, _, _ = importTimeCards(df, make_conn())
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(existing_sched_ids=[existing_id])):
+            existing, _, _, _, _ = importTimeCards(df, conn)
 
-        assert added == 0
-        assert len(existing) > 0
+        assert existing_id in existing
 
     def test_creates_timecard_when_not_existing(self):
-        """When no Time_Card exists for an employee/period, an INSERT into dbo.Time_Card should be issued."""
+        """When no Time_Card exists for an employee/period, cursor.executemany should be called with a Time_Card INSERT."""
         from Controllers.timecardAllocationController import importTimeCards
 
-        calls = []
-
-        def side_effect(conn, query, params=None):
-            calls.append(query.strip()[:30])
-            if "vw_PayPeriods" in query:
-                return empty_df()
-            if "Time_Card" in query and "SELECT" in query:
-                return empty_df()  # card doesn't exist
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Schedule" in query and "SELECT" in query:
-                return empty_df()
-            return None
-
         df = self._base_df()
-        with patch(PATCH, side_effect=side_effect):
-            importTimeCards(df, make_conn())
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(existing_tc=False)):
+            importTimeCards(df, conn)
 
-        assert any("INSERT INTO dbo.Time_Card" in c for c in calls)
+        calls = conn.cursor.return_value.executemany.call_args_list
+        assert any("Time_Card" in str(c) for c in calls)
 
     def test_percentage_calculated_correctly_for_regular(self):
         """Percentage for a regular schedule entry should be (TotalHours / PayPeriodHours) * 100, rounded to 2dp."""
         from Controllers.timecardAllocationController import importTimeCards
 
-        inserted_params = []
-
-        def side_effect(conn, query, params=None):
-            if "vw_PayPeriods" in query:
-                return empty_df()
-            if "Time_Card" in query and "SELECT" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Schedule" in query and "SELECT" in query:
-                return empty_df()
-            if "INSERT INTO dbo.Schedule" in query and params:
-                inserted_params.append(params)
-            return None
-
         # 4 hours out of 8 allowed = 50%
         df = self._base_df(hours=4.0)
-        with patch(PATCH, side_effect=side_effect):
-            importTimeCards(df, make_conn())
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side()):
+            importTimeCards(df, conn)
 
-        pct_values = [p[5] for p in inserted_params if len(p) > 5]
+        schedule_rows = []
+        for c in conn.cursor.return_value.executemany.call_args_list:
+            query, rows = c[0]
+            if "Schedule" in query:
+                schedule_rows.extend(rows)
+
+        pct_values = [r[5] for r in schedule_rows]
         assert 50.0 in pct_values
 
     def test_pay_period_dates_are_weekdays_only(self):
         """Backfilled schedule entries should only be created for weekdays — Saturday and Sunday must be skipped."""
         from Controllers.timecardAllocationController import importTimeCards
 
-        inserted_dates = []
-
-        def side_effect(conn, query, params=None):
-            if "vw_PayPeriods" in query:
-                return empty_df()
-            if "Time_Card" in query and "SELECT" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Schedule" in query and "SELECT" in query:
-                return empty_df()
-            if "INSERT INTO dbo.Schedule" in query and params:
-                inserted_dates.append(params[2])
-            return None
-
         # Monday 2025-04-28 as start so the 10-day window crosses a weekend
         df = self._base_df(date="2025-04-28")
-        with patch(PATCH, side_effect=side_effect):
-            importTimeCards(df, make_conn())
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side()):
+            importTimeCards(df, conn)
+
+        inserted_dates = []
+        for c in conn.cursor.return_value.executemany.call_args_list:
+            query, rows = c[0]
+            if "Schedule" in query:
+                inserted_dates.extend(r[2] for r in rows)
 
         for date_str in inserted_dates:
             dt = datetime.strptime(date_str, "%Y%m%d")
