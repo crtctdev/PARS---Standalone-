@@ -294,7 +294,7 @@ with sidebar_col:
                     st.session_state.active_page = page
                     st.rerun()
 
-    if isManager:
+    if isManager and user["email"].lower() == "mapheyp@crtct.org":
         st.markdown('<p class="sidebar-label">Import</p>', unsafe_allow_html=True)
 
         if st.session_state.import_message:
