@@ -261,7 +261,7 @@ if not login:
     st.error(f"Your account ({user['email']}) is not set up in the system. Please contact your administrator.")
     st.stop()
 
-if login[0].work_email == "mapheyp@CRTCT.ORG":
+if login[0].work_email == "mapheyp@crtct.org":
     isManager = True
 else:
     isManager = login[0].isManager()
