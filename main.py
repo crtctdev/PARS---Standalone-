@@ -323,11 +323,15 @@ with sidebar_col:
                 unrepresented = [c for c in st.session_state.db_employee_codes if c not in import_codes]
                 auto_allocated = autoAllocateSalariedEmployees(conn, pay_period, pay_period_start, unrepresented)
 
+                allocated_tc_df = run_query(conn, "SELECT EmployeeCode FROM dbo.Time_Card WHERE PayPeriod = ?", [pay_period])
+                allocated_codes = set(allocated_tc_df["EmployeeCode"].tolist()) if allocated_tc_df is not None and not allocated_tc_df.empty else set()
+                unallocated = [c for c in st.session_state.db_employee_codes if c not in allocated_codes]
+
                 logImport(conn, user["email"], pay_period, pay_period_start,
-                          added, len(existing), list(set(missing)))
-                if missing:
+                          added, len(existing), unallocated)
+                if unallocated:
                     with open("missing_employees.log", "a") as f:
-                        f.write(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] Pay Period: {pay_period} | Missing: {', '.join(set(missing))}\n")
+                        f.write(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] Pay Period: {pay_period} | Missing: {', '.join(unallocated)}\n")
                 st.session_state.file_uploader_key += 1
 
                 auto_msg = f" Auto-allocated {len(auto_allocated)} salaried employee(s)." if auto_allocated else ""

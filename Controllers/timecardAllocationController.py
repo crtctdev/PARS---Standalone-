@@ -106,7 +106,7 @@ def importTimeCards(df, conn):
     new_timecards = [
         (f"TCARD{ec}{max_date_str}", ec, max_date_str, 0, min_date_str)
         for ec in employee_codes
-        if f"TCARD{ec}{max_date_str}" not in existing_timecards
+        if ec in hours_map and f"TCARD{ec}{max_date_str}" not in existing_timecards
     ]
     if new_timecards:
         cursor = conn.cursor()
@@ -125,8 +125,6 @@ def importTimeCards(df, conn):
 
         hoursAllowed = hours_map.get(employeecode)
         if hoursAllowed is None or pd.isna(hoursAllowed) or hoursAllowed == 0:
-            if employeecode not in missing_employees:
-                missing_employees.append(employeecode)
             continue
 
         timeCardID = f"TCARD{employeecode}{max_date_str}"
