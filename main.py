@@ -261,7 +261,7 @@ if not login:
     st.error(f"Your account ({user['email']}) is not set up in the system. Please contact your administrator.")
     st.stop()
 
-if login[0].work_email == "mapheyp@crtct.org":
+if login[0].work_email.lower() == "mapheyp@crtct.org":
     isManager = True
 else:
     isManager = login[0].isManager()
@@ -280,10 +280,10 @@ with sidebar_col:
         pages = [
         "Timecard Allocations",
         "Approval Report Manager",
-        "Time Card Report"
+        #"Time Card Report"
         ] if isManager else [
             "Timecard Allocations",
-            "Time Card Report"
+            #"Time Card Report"
         ]
         for page in pages:
             is_active = st.session_state.active_page == page
@@ -380,11 +380,11 @@ with main_col:
             timecard_allocations.render(conn, user, login)
         case "Approval Report Manager":
             approval_report_manager.render(conn, user, login)
-        case "Time Card Report":
-            employee_code = login[0].employee_code
-            managing_dept = login[0].managing_department
-            dept_code = login[0].dept_code
-            if not isManager:
-                render_report(f"Invoked_x0020_function/EmployeeCode eq '{employee_code}'")
-            else:
-                render_report(f"Invoked_x0020_function/DepartmentCode eq '{managing_dept}' or Invoked_x0020_function/DepartmentCode eq '{dept_code}'")
+        # case "Time Card Report":
+        #     employee_code = login[0].employee_code
+        #     managing_dept = login[0].managing_department
+        #     dept_code = login[0].dept_code
+        #     if not isManager:
+        #         render_report(f"Invoked_x0020_function/EmployeeCode eq '{employee_code}'")
+        #     else:
+        #         render_report(f"Invoked_x0020_function/DepartmentCode eq '{managing_dept}' or Invoked_x0020_function/DepartmentCode eq '{dept_code}'")
