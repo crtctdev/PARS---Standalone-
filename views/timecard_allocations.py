@@ -19,7 +19,11 @@ def render(conn, user, login):
         )
 
     with ctrl2:
-        employees = getEmployeesByPayPeriod(conn, pay_period, user)
+        try:
+            employees = getEmployeesByPayPeriod(conn, pay_period, user)
+        except Exception:
+            st.error("Cannot pull timecards.")
+            return
         employee_name = st.selectbox(
             "Employee Name",
             options=employees,
