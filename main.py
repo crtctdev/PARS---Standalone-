@@ -346,37 +346,37 @@ with sidebar_col:
     ctrl1, ctrl2 = st.columns([1, 1])
     
     pay_periods = getPayPeriods(conn)
-    if isManager:
-        with ctrl1:
-            pay_period_start = st.selectbox(
-                "Pay Period Start",
-                options=pay_periods,
-                index=0,
-            )
-        with ctrl2:
-            pay_period_end = st.selectbox(
-                "Pay Period End",
-                options=pay_periods,
-                index=0,
-            )
+    # if isManager:
+    #     with ctrl1:
+    #         pay_period_start = st.selectbox(
+    #             "Pay Period Start",
+    #             options=pay_periods,
+    #             index=0,
+    #         )
+    #     with ctrl2:
+    #         pay_period_end = st.selectbox(
+    #             "Pay Period End",
+    #             options=pay_periods,
+    #             index=0,
+    #         )
      
-        if st.button("Download Export", use_container_width=True):
-            df = run_query(conn,
-                "SELECT * FROM dbo.fn_EmployeeTaskFundHours(?, ?)",
-                [pay_period_start, pay_period_end]
-            )
+    #     if st.button("Download Export", use_container_width=True):
+    #         df = run_query(conn,
+    #             "SELECT * FROM dbo.fn_EmployeeTaskFundHours(?, ?)",
+    #             [pay_period_start, pay_period_end]
+    #         )
 
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                df.to_excel(writer, index=False, sheet_name="Export")
-            buffer.seek(0)
+    #         buffer = io.BytesIO()
+    #         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+    #             df.to_excel(writer, index=False, sheet_name="Export")
+    #         buffer.seek(0)
 
-            st.download_button(
-                label="Click to Save",
-                data=buffer,
-                file_name="export.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+    #         st.download_button(
+    #             label="Click to Save",
+    #             data=buffer,
+    #             file_name="export.xlsx",
+    #             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    #         )
 # ── MAIN CONTENT ──────────────────────────────────────────────────────────────
 with main_col:
     match st.session_state.active_page:
