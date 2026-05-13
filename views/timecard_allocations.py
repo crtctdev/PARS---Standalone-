@@ -70,25 +70,32 @@ def render(conn, user, login):
     else:
         with st.container(border=True):
 
-            col1, col2, col3, col4, col5 = st.columns([0.5, 2, 2, 1.5, 1.5])
+            col1, col2, col3, col4, col5, col6 = st.columns([0.5, 2, 2, 1.5, 1.5, 1.5])
             col1.markdown("&nbsp;")
             col2.markdown("**Date**")
             col3.markdown("**Pay Type**")
             col4.markdown("**Total Hours**")
             col5.markdown("**Percentage**")
+            col6.markdown("**Allocations Made**")
 
             st.divider()
 
             task_options = getTasks(conn)
 
+            schedule_ids = timecard_df["ScheduleID"].tolist()
+            placeholders = ','.join(['?' for _ in schedule_ids])
+            allocated_df = run_query(conn, f"SELECT DISTINCT ScheduleID FROM dbo.Record WHERE ScheduleID IN ({placeholders})", schedule_ids)
+            allocated_ids = set(allocated_df["ScheduleID"].tolist()) if allocated_df is not None and not allocated_df.empty else set()
+
             for _, row in timecard_df.iterrows():
-                
+
                 schedule_id = row["ScheduleID"]
                 key = f"expanded_{schedule_id}"
                 if key not in st.session_state:
                     st.session_state[key] = False
 
-                col1, col2, col3, col4, col5 = st.columns([0.5, 2, 2, 1.5, 1.5])
+                has_records = schedule_id in allocated_ids
+                col1, col2, col3, col4, col5, col6 = st.columns([0.5, 2, 2, 1.5, 1.5, 1.5])
                 with col1:
                     arrow = "▼" if st.session_state[key] else "►"
                     if st.button(arrow, key=f"btn_{schedule_id}"):
@@ -98,6 +105,7 @@ def render(conn, user, login):
                 col3.write(row["PayType"])
                 col4.write(row["TotalHours"])
                 col5.write(f"{row['Percentage']}%")
+                col6.checkbox("", value=has_records, disabled=True, key=f"alloc_check_{schedule_id}")
                 st.markdown("---")
                 if st.session_state[key]:
                     with st.container():
@@ -124,17 +132,18 @@ def render(conn, user, login):
                         )
 
                         edited_df = edited_df.dropna(how="all").copy()
-                        total = pd.to_numeric(edited_df["Hours"], errors="coerce").fillna(0).sum()
+                        total = round(pd.to_numeric(edited_df["Hours"], errors="coerce").fillna(0).sum(), 2)
+                        required = round(float(row["TotalHours"]), 2)
+                        hours_match = total == required
 
                         st.write(f"**Total Allocation: {total:.2f}**")
 
-                        if total != float(row["TotalHours"]):
+                        if not hours_match:
                             st.error("Allocated Hours Must Equate To Total Hours")
 
-                        if st.button(
+                        if hours_match and st.button(
                             "💾 Save Allocations",
                             key=f"save_{schedule_id}",
-                            disabled=total > float(row["TotalHours"]),
                         ):
                             original_ids = set(allocations_df["ID"].dropna().astype(int))
                             edited_ids = set(edited_df["ID"].dropna().astype(int))

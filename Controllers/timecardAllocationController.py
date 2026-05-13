@@ -224,45 +224,79 @@ def autoAllocateSalariedEmployees(conn, pay_period_str, pay_period_start_str, em
     )
     auto_allocated = []
 
+    if not employee_codes:
+        return auto_allocated
+
+    placeholders = ','.join(['?' for _ in employee_codes])
+    hours_df = run_query(conn, f"SELECT EmployeeCode, PayPeriodHours FROM dbo.vw_EmployeeInformation WHERE EmployeeCode IN ({placeholders})", employee_codes)
+    hours_map = {str(r["EmployeeCode"]).strip(): r["PayPeriodHours"] for _, r in hours_df.iterrows()} if hours_df is not None and not hours_df.empty else {}
+
+    existing_reg_df = run_query(conn, f"""
+        SELECT S.EmployeeCode, COUNT(*) AS cnt
+        FROM dbo.Schedule S
+        JOIN dbo.Time_Card T ON T.TimeCardID = S.TimeCardID
+        WHERE S.EmployeeCode IN ({placeholders}) AND T.PayPeriod = ? AND S.PayType = 'Regular'
+        GROUP BY S.EmployeeCode
+    """, employee_codes + [pay_period_str])
+    existing_reg_map = {str(r["EmployeeCode"]).strip(): r["cnt"] for _, r in existing_reg_df.iterrows()} if existing_reg_df is not None and not existing_reg_df.empty else {}
+
+    existing_tc_df = run_query(conn, f"""
+        SELECT TimeCardID FROM dbo.Time_Card
+        WHERE EmployeeCode IN ({placeholders}) AND PayPeriod = ?
+    """, employee_codes + [pay_period_str])
+    existing_timecards = set(existing_tc_df["TimeCardID"].tolist()) if existing_tc_df is not None and not existing_tc_df.empty else set()
+
+    existing_sched_df = run_query(conn, f"""
+        SELECT S.ScheduleID FROM dbo.Schedule S
+        JOIN dbo.Time_Card T ON T.TimeCardID = S.TimeCardID
+        WHERE S.EmployeeCode IN ({placeholders}) AND T.PayPeriod = ? AND S.PayType = 'Regular'
+    """, employee_codes + [pay_period_str])
+    existing_schedule_ids = set(existing_sched_df["ScheduleID"].tolist()) if existing_sched_df is not None and not existing_sched_df.empty else set()
+
+    new_timecards = []
+    schedule_rows = []
+
     for employeecode in employee_codes:
-        existing_count_df = run_query(conn, """
-            SELECT COUNT(*) AS cnt
-            FROM dbo.Schedule S
-            JOIN dbo.Time_Card T ON T.TimeCardID = S.TimeCardID
-            WHERE S.EmployeeCode = ? AND T.PayPeriod = ? AND S.PayType = 'Regular'
-        """, [employeecode, pay_period_str])
-        existing_count = existing_count_df.iloc[0, 0] if existing_count_df is not None and not existing_count_df.empty else 0
+        existing_count = existing_reg_map.get(employeecode, 0)
         if existing_count >= len(pay_period_dates):
             continue
 
-        hours_result = run_query(conn, """
-            SELECT PayPeriodHours FROM dbo.vw_EmployeeInformation WHERE EmployeeCode = ?
-        """, [employeecode])
-        if hours_result is None or hours_result.empty:
-            continue
-        hoursAllowed = hours_result.iloc[0, 0]
-        if pd.isna(hoursAllowed) or hoursAllowed == 0:
+        hoursAllowed = hours_map.get(employeecode)
+        if hoursAllowed is None or pd.isna(hoursAllowed) or hoursAllowed == 0:
             continue
 
         timeCardID = f"TCARD{employeecode}{pay_period_str}"
-        existing_card = run_query(conn, "SELECT * FROM dbo.Time_Card WHERE TimeCardID = ?", [timeCardID])
-        if existing_card is None or existing_card.empty:
-            createTimeCard(pay_period_str, employeecode, timeCardID, 0, pay_period_start_str, conn)
+        if timeCardID not in existing_timecards:
+            new_timecards.append((timeCardID, employeecode, pay_period_str, 0, pay_period_start_str))
+            existing_timecards.add(timeCardID)
 
         days_inserted = 0
         for date in pay_period_dates:
             schedualID = f"SCH{employeecode}{date.strftime('%Y%m%d')}REG"
-            existing_sch = run_query(conn, "SELECT * FROM dbo.Schedule WHERE ScheduleID = ?", [schedualID])
-            if existing_sch is not None and not existing_sch.empty:
+            if schedualID in existing_schedule_ids:
                 continue
-            run_query(conn, """
-                INSERT INTO dbo.Schedule (ScheduleID, EmployeeCode, Date, PayType, TotalHours, Percentage, TimeCardID)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, [schedualID, employeecode, date.strftime('%Y%m%d'), 'Regular', hoursAllowed, 100.0, timeCardID])
+            schedule_rows.append((schedualID, employeecode, date.strftime('%Y%m%d'), 'Regular', hoursAllowed, 100.0, timeCardID))
+            existing_schedule_ids.add(schedualID)
             days_inserted += 1
 
         if days_inserted > 0:
             auto_allocated.append(employeecode)
+
+    if new_timecards:
+        cursor = conn.cursor()
+        cursor.executemany(
+            "INSERT INTO dbo.Time_Card (TimeCardID, EmployeeCode, PayPeriod, Approval, PayPeriodStart) VALUES (?, ?, ?, ?, ?)",
+            new_timecards
+        )
+        conn.commit()
+
+    if schedule_rows:
+        cursor = conn.cursor()
+        cursor.executemany(
+            "INSERT INTO dbo.Schedule (ScheduleID, EmployeeCode, Date, PayType, TotalHours, Percentage, TimeCardID) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            schedule_rows
+        )
+        conn.commit()
 
     return auto_allocated
 
@@ -343,7 +377,7 @@ def getEmployeesByPayPeriod(conn, pay_period, user):
         row["EmployeeFirst"],
         row["DepartmentCode"],
         row["WorkEmail"],
-        "N/A",
+        None,
         row["PayPeriodHours"]
     ) for _, row in df.iterrows()]
 
@@ -428,7 +462,8 @@ def saveAllocations(conn, schedule_id, edited_df):
     Returns:
         pd.DataFrame: The updated DataFrame with ID values populated for newly inserted rows.
     """
-    records_size = run_query(conn, "SELECT COUNT(*) AS count FROM dbo.Record").iloc[0, 0]
+    max_id_df = run_query(conn, "SELECT ISNULL(MAX(ID), 0) AS max_id FROM dbo.Record")
+    next_id = int(max_id_df.iloc[0, 0]) + 1
     edited_df = edited_df.dropna(how="all").copy()
     edited_df["Hours"] = pd.to_numeric(edited_df["Hours"], errors="coerce")
 
@@ -438,7 +473,8 @@ def saveAllocations(conn, schedule_id, edited_df):
             continue
 
         if pd.isna(row["ID"]) or row["ID"] == "":
-            new_id = records_size + idx + 1
+            new_id = next_id
+            next_id += 1
             edited_df.at[idx, "ID"] = new_id
             run_query(conn, """
                 INSERT INTO dbo.Record (Task, Fund, Hours, ID, ScheduleID)
@@ -467,7 +503,7 @@ def deleteRecord(conn, recordID):
     Returns:
         None
     """
-    run_query(conn, "DELETE FROM Record WHERE ID LIKE ?", [f"%{recordID}%"])
+    run_query(conn, "DELETE FROM Record WHERE ID = ?", [recordID])
 
 
 def changeTimecardState(emplyeeCode, approverCode, payPeriod, conn, approval, acknowledged):
@@ -494,11 +530,24 @@ def changeTimecardState(emplyeeCode, approverCode, payPeriod, conn, approval, ac
     period = f"{parts[2]}{parts[0]}{parts[1]}"
     timeCardID = f'TCARD{emplyeeCode}{period}'
     today = datetime.today().strftime('%Y-%m-%d')
+
+    current = run_query(conn, "SELECT Approval, Acknowledged FROM Time_Card WHERE TimeCardID = ?", [timeCardID])
+    prev_approval     = int(current.iloc[0, 0]) if current is not None and not current.empty and pd.notna(current.iloc[0, 0]) else 0
+    prev_acknowledged = int(current.iloc[0, 1]) if current is not None and not current.empty and pd.notna(current.iloc[0, 1]) else 0
+
+    new_approved_date     = today if int(approval)     != prev_approval     else None
+    new_acknowledged_date = today if int(acknowledged) != prev_acknowledged else None
+
     run_query(conn, """
         UPDATE Time_Card
-        SET Approval = ?, ApprovedBy = ?, ApprovedDate = ?, Acknowledged = ?, AcknowledgedDate = ?
+        SET Approval        = ?,
+            ApprovedBy      = ?,
+            ApprovedDate    = CASE WHEN ? IS NOT NULL THEN ? ELSE ApprovedDate END,
+            Acknowledged    = ?,
+            AcknowledgedDate = CASE WHEN ? IS NOT NULL THEN ? ELSE AcknowledgedDate END
         WHERE TimeCardID = ?
-    """, [approval, approverCode, today, acknowledged, today, timeCardID])
+    """, [approval, approverCode, new_approved_date, new_approved_date,
+          acknowledged, new_acknowledged_date, new_acknowledged_date, timeCardID])
 
 
 def checkState(employeeCode, payPeriod, conn):

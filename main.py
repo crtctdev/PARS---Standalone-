@@ -41,7 +41,8 @@ if st.session_state.user is None:
             claims = result["id_token_claims"]
             st.session_state.user = {
                 "name": claims.get("name"),
-                "email": claims.get("preferred_username"),
+                #Throw in here to spoof as other people
+                "email": "rakhudum@crtct.org",
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()
@@ -344,9 +345,7 @@ with sidebar_col:
 
                 st.rerun()
     ctrl1, ctrl2 = st.columns([1, 1])
-    
-    pay_periods = getPayPeriods(conn)
-    
+
 # ── MAIN CONTENT ──────────────────────────────────────────────────────────────
 with main_col:
     match st.session_state.active_page:
