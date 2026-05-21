@@ -356,18 +356,19 @@ with sidebar_col:
             if periods_key != st.session_state.get("export_periods_key"):
                 st.session_state.export_periods_key = periods_key
                 if selected_periods:
-                    def to_db_period(p):
-                        parts = p.split("/")
-                        return f"{parts[2]}{parts[0]}{parts[1]}"
-                    frames = [run_query(conn, "SELECT * FROM dbo.fn_GetExport(?)", [to_db_period(p)]) for p in selected_periods]
-                    valid = [f for f in frames if f is not None and not f.empty]
-                    export_df = pd.concat(valid, ignore_index=True) if valid else pd.DataFrame()
-                    if not export_df.empty:
-                        buf = io.BytesIO()
-                        export_df.to_excel(buf, index=False)
-                        st.session_state.export_bytes = buf.getvalue()
-                    else:
-                        st.session_state.export_bytes = None
+                    with st.spinner("Preparing export..."):
+                        def to_db_period(p):
+                            parts = p.split("/")
+                            return f"{parts[2]}{parts[0]}{parts[1]}"
+                        frames = [run_query(conn, "SELECT * FROM dbo.fn_GetExport(?)", [to_db_period(p)]) for p in selected_periods]
+                        valid = [f for f in frames if f is not None and not f.empty]
+                        export_df = pd.concat(valid, ignore_index=True) if valid else pd.DataFrame()
+                        if not export_df.empty:
+                            buf = io.BytesIO()
+                            export_df.to_excel(buf, index=False)
+                            st.session_state.export_bytes = buf.getvalue()
+                        else:
+                            st.session_state.export_bytes = None
                 else:
                     st.session_state.export_bytes = None
 
