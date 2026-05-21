@@ -2,6 +2,7 @@ import streamlit as st
 from Controllers.DB import *
 from Controllers.timecardAllocationController import *
 from Classes import *
+from Jobs.notify_manager_on_acknowledge import notify_manager
 
 
 def render(conn, user, login):
@@ -29,30 +30,31 @@ def render(conn, user, login):
             options=employees,
             format_func=lambda e: e.full_name(),
         )
-    approved , acknowledged   = checkState(employee_name.employee_code, pay_period, conn)
-    
-    with ctrl3:
-        if "prev_approval" not in st.session_state:
-            st.session_state.prev_approval = approved  # set to DB value on load
+    approved, acknowledged = checkState(employee_name.employee_code, pay_period, conn)
 
+    state_key = f"{employee_name.employee_code}_{pay_period}"
+    if st.session_state.get("timecard_state_key") != state_key:
+        st.session_state.timecard_state_key = state_key
+        st.session_state.prev_approval = approved
+        st.session_state.prev_acknowledged = acknowledged
+
+    with ctrl3:
         approvalCheckbox = st.checkbox("Manager Approval", value=approved, disabled=not isManager)
 
     with ctrl4:
-        if "prev_acknowledged" not in st.session_state:
-            st.session_state.prev_acknowledged = acknowledged  # set to DB value on load
-
         acknowledgedCheckbox = st.checkbox("Employee Acknowledgement", value=acknowledged)
 
-        
     # Only fires if the checkbox was actually toggled
     if approvalCheckbox != st.session_state.prev_approval:
         st.session_state.prev_approval = approvalCheckbox
-        changeTimecardState(employee_name.employee_code, login[0].employee_code, pay_period, conn, approvalCheckbox , acknowledgedCheckbox)
-        st.rerun()   
+        changeTimecardState(employee_name.employee_code, login[0].employee_code, pay_period, conn, approvalCheckbox, acknowledgedCheckbox)
+        st.rerun()
     # Only fires if the checkbox was actually toggled
     if acknowledgedCheckbox != st.session_state.prev_acknowledged:
         st.session_state.prev_acknowledged = acknowledgedCheckbox
-        changeTimecardState(employee_name.employee_code, login[0].employee_code, pay_period, conn, approvalCheckbox , acknowledgedCheckbox)
+        changeTimecardState(employee_name.employee_code, login[0].employee_code, pay_period, conn, approvalCheckbox, acknowledgedCheckbox)
+        if acknowledgedCheckbox:
+            notify_manager(conn, employee_name.work_email, pay_period, employee_name.full_name())
         st.rerun()
     
     refresh_col, status_col , _ = st.columns([1,2,6])
@@ -64,19 +66,39 @@ def render(conn, user, login):
     if employee_name is not None:
         timecard_df = getSchedule(conn, employee_name.employee_code, pay_period)
         fund_options = getFundsByEmployee(conn, employee_name.employee_code)
+        fund_allocations = getFundAllocations(conn, employee_name.work_email)
 
     if timecard_df.empty:
         st.caption("No records to display.")
     else:
         with st.container(border=True):
 
-            col1, col2, col3, col4, col5, col6 = st.columns([0.5, 2, 2, 1.5, 1.5, 1.5])
+            col1, col2, col3, col4, col5, col6, col7 = st.columns([0.5, 2, 2, 1.5, 1.5, 1.5, 1.2])
             col1.markdown("&nbsp;")
             col2.markdown("**Date**")
             col3.markdown("**Pay Type**")
             col4.markdown("**Total Hours**")
             col5.markdown("**Percentage**")
             col6.markdown("**Allocations Made**")
+            col7.markdown("**Fund Code Breakdown**")
+
+            st.markdown("""
+            <style>
+            .fund-tooltip { position: relative; display: flex; justify-content: center; cursor: help; }
+            .fund-tooltip .tooltiptext {
+                visibility: hidden; opacity: 0;
+                background-color: #1e293b; color: #fff;
+                padding: 12px 18px; border-radius: 8px;
+                position: absolute; z-index: 9999;
+                bottom: 130%; left: 50%; transform: translateX(-50%);
+                font-size: 16px; min-width: 260px; line-height: 2;
+                box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+                transition: opacity 0.15s;
+                pointer-events: none;
+            }
+            .fund-tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
+            </style>
+            """, unsafe_allow_html=True)
 
             st.divider()
 
@@ -95,7 +117,22 @@ def render(conn, user, login):
                     st.session_state[key] = False
 
                 has_records = schedule_id in allocated_ids
-                col1, col2, col3, col4, col5, col6 = st.columns([0.5, 2, 2, 1.5, 1.5, 1.5])
+                total_hours = float(row["TotalHours"])
+                breakdown_html = ""
+                if fund_allocations:
+                    lines = [
+                        f"{f['FundCode']}: {round(total_hours * f['Percentage'] / 100, 2)}h ({f['Percentage']}%)"
+                        for f in fund_allocations
+                    ]
+                    tooltip_content = "<br>".join(lines)
+                    breakdown_html = f'''<div style="display:flex; justify-content:center;">
+                        <span class="fund-tooltip">
+                            <span style="font-size:20px;">ℹ️</span>
+                            <span class="tooltiptext">{tooltip_content}</span>
+                        </span>
+                    </div>'''
+
+                col1, col2, col3, col4, col5, col6, col7 = st.columns([0.5, 2, 2, 1.5, 1.5, 1.5, 1.2])
                 with col1:
                     arrow = "▼" if st.session_state[key] else "►"
                     if st.button(arrow, key=f"btn_{schedule_id}"):
@@ -106,6 +143,7 @@ def render(conn, user, login):
                 col4.write(row["TotalHours"])
                 col5.write(f"{row['Percentage']}%")
                 col6.checkbox("", value=has_records, disabled=True, key=f"alloc_check_{schedule_id}")
+                col7.markdown(breakdown_html, unsafe_allow_html=True)
                 st.markdown("---")
                 if st.session_state[key]:
                     with st.container():

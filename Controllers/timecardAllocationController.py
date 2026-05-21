@@ -421,6 +421,17 @@ def getTasks(conn):
     return (df["Code"] + ":" + df["Description"]).tolist()
 
 
+def getFundAllocations(conn, work_email):
+    df = run_query(conn, """
+        SELECT FundCode, Percentage
+        FROM CRT_INFO.dbo.ADUsers
+        WHERE LOWER(WorkEmail) = LOWER(?)
+    """, [work_email])
+    if df is None or df.empty:
+        return []
+    return df.to_dict("records")
+
+
 def getFundsByEmployee(conn, employee_code):
     """
     Retrieves the funds associated with a specific employee.
@@ -541,12 +552,12 @@ def changeTimecardState(emplyeeCode, approverCode, payPeriod, conn, approval, ac
     run_query(conn, """
         UPDATE Time_Card
         SET Approval        = ?,
-            ApprovedBy      = ?,
+            ApprovedBy      = CASE WHEN ? IS NOT NULL THEN ? ELSE ApprovedBy END,
             ApprovedDate    = CASE WHEN ? IS NOT NULL THEN ? ELSE ApprovedDate END,
             Acknowledged    = ?,
             AcknowledgedDate = CASE WHEN ? IS NOT NULL THEN ? ELSE AcknowledgedDate END
         WHERE TimeCardID = ?
-    """, [approval, approverCode, new_approved_date, new_approved_date,
+    """, [approval, new_approved_date, approverCode, new_approved_date, new_approved_date,
           acknowledged, new_acknowledged_date, new_acknowledged_date, timeCardID])
 
 

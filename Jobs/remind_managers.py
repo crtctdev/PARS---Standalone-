@@ -6,6 +6,7 @@ import msal
 import pandas as pd
 from datetime import datetime
 
+#Run Once A week 
 
 
 _secrets_path = os.path.join(os.path.dirname(__file__), "..", ".streamlit", "secrets.toml")

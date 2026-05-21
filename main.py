@@ -42,7 +42,7 @@ if st.session_state.user is None:
             st.session_state.user = {
                 "name": claims.get("name"),
                 #Throw in here to spoof as other people
-                "email": "rakhudum@crtct.org",
+                "email": "mapheyp@crtct.org",
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()
