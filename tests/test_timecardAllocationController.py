@@ -81,24 +81,32 @@ class TestCheckState:
 # ── changeTimecardState ───────────────────────────────────────────────────────
 
 class TestChangeTimecardState:
+    def _prev_state(self, approval=0, acknowledged=0):
+        """Return a side_effect that serves the current-state SELECT then accepts the UPDATE."""
+        state_df = pd.DataFrame([{"Approval": approval, "Acknowledged": acknowledged}])
+        calls = {"n": 0}
+        def side_effect(conn, query, params=None):
+            calls["n"] += 1
+            return state_df if calls["n"] == 1 else None
+        return side_effect
+
     def test_calls_update_with_correct_timecardid(self):
-        """The UPDATE must target the exact TimeCardID built from employee code and pay period."""
+        """The UPDATE must target the exact TimeCardID (TCARD{EmployeeCode}{YYYYMMDD}) as the final parameter."""
         from Controllers.timecardAllocationController import changeTimecardState
-        with patch(PATCH) as mock_rq:
+        with patch(PATCH, side_effect=self._prev_state()) as mock_rq:
             changeTimecardState("EMP001", "MGR01", "04/30/2025", make_conn(), 1, 0)
         params = mock_rq.call_args[0][2]
-        assert "TCARDEXP00120250430" not in str(params)
-        assert params[5] == "TCARDEMP00120250430"
+        assert params[-1] == "TCARDEMP00120250430"
 
     def test_sets_approval_and_acknowledged(self):
-        """Approval, approver code, and acknowledged flag must all be passed in the correct parameter positions."""
+        """Approval (index 0), ApprovedBy (index 2), and Acknowledged (index 5) must be at the correct positions."""
         from Controllers.timecardAllocationController import changeTimecardState
-        with patch(PATCH) as mock_rq:
+        with patch(PATCH, side_effect=self._prev_state()) as mock_rq:
             changeTimecardState("EMP001", "MGR01", "04/30/2025", make_conn(), 1, 1)
         params = mock_rq.call_args[0][2]
-        assert params[0] == 1       # Approval
-        assert params[3] == 1       # Acknowledged
-        assert params[1] == "MGR01" # ApprovedBy
+        assert params[0] == 1        # Approval
+        assert params[2] == "MGR01"  # ApprovedBy
+        assert params[5] == 1        # Acknowledged
 
 
 # ── getTasks ──────────────────────────────────────────────────────────────────
@@ -144,13 +152,13 @@ class TestGetFundsByEmployee:
 # ── deleteRecord ──────────────────────────────────────────────────────────────
 
 class TestDeleteRecord:
-    def test_calls_delete_with_like_pattern(self):
-        """deleteRecord must use a LIKE %id% pattern to match the record ID rather than an exact equality check."""
+    def test_calls_delete_with_exact_id(self):
+        """deleteRecord must pass the record ID as an exact match parameter to the DELETE query."""
         from Controllers.timecardAllocationController import deleteRecord
         with patch(PATCH) as mock_rq:
             deleteRecord(make_conn(), 42)
         params = mock_rq.call_args[0][2]
-        assert params == ["%42%"]
+        assert params == [42]
 
 
 # ── saveAllocations ───────────────────────────────────────────────────────────
@@ -262,26 +270,26 @@ class TestImportTimeCards:
         assert min_date_str == "20250421"
 
     def test_missing_employee_when_not_in_db(self):
-        """An employee whose EECode has no matching EmployeeInformation row should appear in the missing list."""
+        """An employee whose EECode has no matching EmployeeInformation row should be silently skipped — records_added must stay 0."""
         from Controllers.timecardAllocationController import importTimeCards
 
         df = self._base_df()
         conn = make_conn()
         with patch(PATCH, side_effect=self._side(hours=None)):
-            _, missing, _, _, _ = importTimeCards(df, conn)
+            _, _, added, _, _ = importTimeCards(df, conn)
 
-        assert "EMP001" in missing
+        assert added == 0
 
     def test_missing_employee_when_hours_zero(self):
-        """An employee with PayPeriodHours = 0 cannot have allocations calculated and should be flagged as missing."""
+        """An employee with PayPeriodHours = 0 cannot have allocations calculated and must be silently skipped — records_added must stay 0."""
         from Controllers.timecardAllocationController import importTimeCards
 
         df = self._base_df()
         conn = make_conn()
         with patch(PATCH, side_effect=self._side(hours=0)):
-            _, missing, _, _, _ = importTimeCards(df, conn)
+            _, _, added, _, _ = importTimeCards(df, conn)
 
-        assert "EMP001" in missing
+        assert added == 0
 
     def test_new_schedule_record_increments_added_count(self):
         """Each Schedule INSERT for a new record (not already in the DB) should increment the records_added counter."""
@@ -365,56 +373,83 @@ class TestAutoAllocateSalariedEmployees:
     Invariant: after any import, every active salaried employee (PayPeriodHours > 0)
     in EmployeeInformation must have a complete 10-business-day Regular schedule for
     the pay period. Employees already fully covered are skipped without any writes.
+
+    The function issues four bulk upfront queries (hours, count, timecards, scheduleIDs),
+    then uses cursor.executemany for all inserts — no per-row run_query INSERT calls.
     """
 
     def _side(self, count=0, hours=8.0, card_exists=True, day_exists=False):
-        """Common happy-path side_effect factory."""
+        """
+        Side-effect factory for the four bulk run_query calls made at the start of
+        autoAllocateSalariedEmployees. Inserts go through cursor.executemany, not run_query.
+
+        Q1 PayPeriodHours  — params = employee_codes
+        Q2 COUNT/GROUP BY  — params = employee_codes + [pay_period_str]
+        Q3 TimeCardID bulk — params = employee_codes + [pay_period_str]
+        Q4 ScheduleID bulk — params = employee_codes + [pay_period_str]
+        """
+        pay_dates = pd.date_range("2025-04-21", periods=10, freq="B")
+
         def side_effect(conn, query, params=None):
-            if "COUNT(*) AS cnt" in query:
-                return pd.DataFrame({"cnt": [count]})
+            params = params or []
+
             if "PayPeriodHours" in query:
-                return empty_df() if hours is None else pd.DataFrame({"PayPeriodHours": [hours]})
-            if "Time_Card WHERE TimeCardID" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]}) if card_exists else empty_df()
-            if "INSERT INTO dbo.Time_Card" in query:
-                return None
-            if "Schedule WHERE ScheduleID" in query:
-                return pd.DataFrame({"ScheduleID": ["x"]}) if day_exists else empty_df()
-            if "INSERT INTO dbo.Schedule" in query:
-                return None
+                # params = employee_codes only
+                if hours is None:
+                    return empty_df()
+                return pd.DataFrame({"EmployeeCode": params, "PayPeriodHours": [hours] * len(params)})
+
+            if "COUNT(*) AS cnt" in query:
+                # params = employee_codes + [pay_period_str]; strip last element
+                emp_codes = params[:-1]
+                if count == 0:
+                    return empty_df()
+                return pd.DataFrame({"EmployeeCode": emp_codes, "cnt": [count] * len(emp_codes)})
+
+            if "ScheduleID" in query:
+                # Q4: SELECT S.ScheduleID ... JOIN ... ON T.TimeCardID — check before TimeCardID
+                emp_codes = params[:-1]
+                if not day_exists:
+                    return empty_df()
+                return pd.DataFrame({"ScheduleID": [
+                    f"SCH{ec}{d.strftime('%Y%m%d')}REG"
+                    for ec in emp_codes for d in pay_dates
+                ]})
+
+            if "TimeCardID" in query:
+                # Q3: SELECT TimeCardID FROM dbo.Time_Card
+                emp_codes = params[:-1]
+                if not card_exists:
+                    return empty_df()
+                return pd.DataFrame({"TimeCardID": [f"TCARD{ec}{params[-1]}" for ec in emp_codes]})
+
             return None
         return side_effect
 
+    def _schedule_rows_from_executemany(self, conn):
+        """Extract all Schedule rows inserted via cursor.executemany."""
+        rows = []
+        for call in conn.cursor.return_value.executemany.call_args_list:
+            query, batch = call[0]
+            if "Schedule" in query:
+                rows.extend(batch)
+        return rows
+
     def test_skips_employee_already_fully_allocated(self):
-        """An employee with all 10 Regular days already in the DB must be skipped — no hours lookup or inserts should fire."""
+        """An employee with all 10 Regular days already in the DB must be skipped — only the 4 bulk queries should fire."""
         from Controllers.timecardAllocationController import autoAllocateSalariedEmployees
         with patch(PATCH, side_effect=self._side(count=10)) as mock_rq:
             result = autoAllocateSalariedEmployees(make_conn(), "20250430", "20250421", ["EMP001"])
-        assert mock_rq.call_count == 1  # only the COUNT query
+        assert mock_rq.call_count == 4  # 4 upfront bulk queries; no per-employee inserts
         assert result == []
 
     def test_allocates_ten_days_for_unallocated_employee(self):
-        """An employee with no schedule for the period must receive exactly 10 Regular schedule inserts."""
+        """An employee with no schedule for the period must receive exactly 10 Regular rows via cursor.executemany."""
         from Controllers.timecardAllocationController import autoAllocateSalariedEmployees
-        inserted = []
-
-        def side_effect(conn, query, params=None):
-            if "COUNT(*) AS cnt" in query:
-                return pd.DataFrame({"cnt": [0]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Time_Card WHERE TimeCardID" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "Schedule WHERE ScheduleID" in query:
-                return empty_df()
-            if "INSERT INTO dbo.Schedule" in query and params:
-                inserted.append(params)
-            return None
-
-        with patch(PATCH, side_effect=side_effect):
-            autoAllocateSalariedEmployees(make_conn(), "20250430", "20250421", ["EMP001"])
-
-        assert len(inserted) == 10
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(count=0, hours=8.0, card_exists=True)):
+            autoAllocateSalariedEmployees(conn, "20250430", "20250421", ["EMP001"])
+        assert len(self._schedule_rows_from_executemany(conn)) == 10
 
     def test_employee_in_returned_list_after_allocation(self):
         """An employee who receives at least one new schedule day must appear in the returned list."""
@@ -433,9 +468,11 @@ class TestAutoAllocateSalariedEmployees:
     def test_skips_employee_not_in_employee_information(self):
         """An employee code with no EmployeeInformation row must be silently skipped with no schedule writes."""
         from Controllers.timecardAllocationController import autoAllocateSalariedEmployees
+        conn = make_conn()
         with patch(PATCH, side_effect=self._side(count=0, hours=None)):
-            result = autoAllocateSalariedEmployees(make_conn(), "20250430", "20250421", ["GHOST01"])
+            result = autoAllocateSalariedEmployees(conn, "20250430", "20250421", ["GHOST01"])
         assert result == []
+        assert len(self._schedule_rows_from_executemany(conn)) == 0
 
     def test_skips_employee_with_zero_pay_period_hours(self):
         """An employee with PayPeriodHours = 0 has no valid allocation amount and must be skipped."""
@@ -445,70 +482,30 @@ class TestAutoAllocateSalariedEmployees:
         assert result == []
 
     def test_creates_timecard_when_not_existing(self):
-        """When no Time_Card exists for the employee and pay period, an INSERT into dbo.Time_Card must be issued."""
+        """When no Time_Card exists for the employee and pay period, cursor.executemany must be called with a Time_Card INSERT."""
         from Controllers.timecardAllocationController import autoAllocateSalariedEmployees
-        queries = []
-
-        def side_effect(conn, query, params=None):
-            queries.append(query.strip())
-            if "COUNT(*) AS cnt" in query:
-                return pd.DataFrame({"cnt": [0]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Time_Card WHERE TimeCardID" in query:
-                return empty_df()
-            if "Schedule WHERE ScheduleID" in query:
-                return empty_df()
-            return None
-
-        with patch(PATCH, side_effect=side_effect):
-            autoAllocateSalariedEmployees(make_conn(), "20250430", "20250421", ["EMP001"])
-
-        assert any("INSERT INTO dbo.Time_Card" in q for q in queries)
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(count=0, hours=8.0, card_exists=False)):
+            autoAllocateSalariedEmployees(conn, "20250430", "20250421", ["EMP001"])
+        tc_calls = [c for c in conn.cursor.return_value.executemany.call_args_list if "Time_Card" in c[0][0]]
+        assert len(tc_calls) == 1
 
     def test_does_not_create_timecard_when_already_exists(self):
-        """When a Time_Card already exists for the employee and pay period, no INSERT into dbo.Time_Card should fire."""
+        """When a Time_Card already exists for the employee and pay period, no Time_Card executemany call should fire."""
         from Controllers.timecardAllocationController import autoAllocateSalariedEmployees
-        queries = []
-
-        def side_effect(conn, query, params=None):
-            queries.append(query.strip())
-            if "COUNT(*) AS cnt" in query:
-                return pd.DataFrame({"cnt": [0]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Time_Card WHERE TimeCardID" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "Schedule WHERE ScheduleID" in query:
-                return empty_df()
-            return None
-
-        with patch(PATCH, side_effect=side_effect):
-            autoAllocateSalariedEmployees(make_conn(), "20250430", "20250421", ["EMP001"])
-
-        assert not any("INSERT INTO dbo.Time_Card" in q for q in queries)
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(count=0, hours=8.0, card_exists=True)):
+            autoAllocateSalariedEmployees(conn, "20250430", "20250421", ["EMP001"])
+        tc_calls = [c for c in conn.cursor.return_value.executemany.call_args_list if "Time_Card" in c[0][0]]
+        assert len(tc_calls) == 0
 
     def test_allocated_days_are_weekdays_only(self):
         """Auto-allocated schedule dates must all be weekdays — Saturday and Sunday must never be inserted."""
         from Controllers.timecardAllocationController import autoAllocateSalariedEmployees
-        inserted_dates = []
-
-        def side_effect(conn, query, params=None):
-            if "COUNT(*) AS cnt" in query:
-                return pd.DataFrame({"cnt": [0]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Time_Card WHERE TimeCardID" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "Schedule WHERE ScheduleID" in query:
-                return empty_df()
-            if "INSERT INTO dbo.Schedule" in query and params:
-                inserted_dates.append(params[2])
-            return None
-
-        with patch(PATCH, side_effect=side_effect):
-            autoAllocateSalariedEmployees(make_conn(), "20250430", "20250421", ["EMP001"])
-
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(count=0, hours=8.0, card_exists=True)):
+            autoAllocateSalariedEmployees(conn, "20250430", "20250421", ["EMP001"])
+        inserted_dates = [r[2] for r in self._schedule_rows_from_executemany(conn)]
         assert len(inserted_dates) == 10
         for date_str in inserted_dates:
             dt = datetime.strptime(date_str, "%Y%m%d")
@@ -517,51 +514,23 @@ class TestAutoAllocateSalariedEmployees:
     def test_allocated_days_use_regular_pay_type(self):
         """Every auto-allocated schedule entry must use 'Regular' as its pay type."""
         from Controllers.timecardAllocationController import autoAllocateSalariedEmployees
-        inserted_params = []
-
-        def side_effect(conn, query, params=None):
-            if "COUNT(*) AS cnt" in query:
-                return pd.DataFrame({"cnt": [0]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Time_Card WHERE TimeCardID" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "Schedule WHERE ScheduleID" in query:
-                return empty_df()
-            if "INSERT INTO dbo.Schedule" in query and params:
-                inserted_params.append(params)
-            return None
-
-        with patch(PATCH, side_effect=side_effect):
-            autoAllocateSalariedEmployees(make_conn(), "20250430", "20250421", ["EMP001"])
-
-        assert all(p[3] == "Regular" for p in inserted_params)
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(count=0, hours=8.0, card_exists=True)):
+            autoAllocateSalariedEmployees(conn, "20250430", "20250421", ["EMP001"])
+        rows = self._schedule_rows_from_executemany(conn)
+        assert all(r[3] == "Regular" for r in rows)
 
     def test_allocated_days_use_100_percent(self):
         """Salaried employees auto-allocated for a full day must always have Percentage = 100.0."""
         from Controllers.timecardAllocationController import autoAllocateSalariedEmployees
-        inserted_params = []
-
-        def side_effect(conn, query, params=None):
-            if "COUNT(*) AS cnt" in query:
-                return pd.DataFrame({"cnt": [0]})
-            if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Time_Card WHERE TimeCardID" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "Schedule WHERE ScheduleID" in query:
-                return empty_df()
-            if "INSERT INTO dbo.Schedule" in query and params:
-                inserted_params.append(params)
-            return None
-
-        with patch(PATCH, side_effect=side_effect):
-            autoAllocateSalariedEmployees(make_conn(), "20250430", "20250421", ["EMP001"])
-
-        assert all(p[5] == 100.0 for p in inserted_params)
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(count=0, hours=8.0, card_exists=True)):
+            autoAllocateSalariedEmployees(conn, "20250430", "20250421", ["EMP001"])
+        rows = self._schedule_rows_from_executemany(conn)
+        assert all(r[5] == 100.0 for r in rows)
 
     def test_employee_not_added_if_all_days_already_exist_individually(self):
-        """If COUNT is below 10 but every per-day check finds an existing entry, no inserts fire and employee is excluded."""
+        """If the bulk count is below 10 but all per-day ScheduleIDs already exist, no inserts fire and employee is excluded."""
         from Controllers.timecardAllocationController import autoAllocateSalariedEmployees
         with patch(PATCH, side_effect=self._side(count=5, hours=8.0, day_exists=True)):
             result = autoAllocateSalariedEmployees(make_conn(), "20250430", "20250421", ["EMP001"])
@@ -570,7 +539,7 @@ class TestAutoAllocateSalariedEmployees:
     def test_returns_empty_list_when_all_employees_fully_allocated(self):
         """When every employee in the list is fully covered, the function must return an empty list."""
         from Controllers.timecardAllocationController import autoAllocateSalariedEmployees
-        with patch(PATCH, return_value=pd.DataFrame({"cnt": [10]})):
+        with patch(PATCH, side_effect=self._side(count=10)):
             result = autoAllocateSalariedEmployees(make_conn(), "20250430", "20250421", ["EMP001", "EMP002", "EMP003"])
         assert result == []
 
@@ -585,28 +554,35 @@ class TestAutoAllocateSalariedEmployees:
     def test_fully_allocated_employee_does_not_block_others(self):
         """A fully-allocated employee must not prevent other employees in the same batch from being processed."""
         from Controllers.timecardAllocationController import autoAllocateSalariedEmployees
-        inserts_by_emp = {}
+        conn = make_conn()
 
         def side_effect(conn, query, params=None):
-            if "COUNT(*) AS cnt" in query:
-                emp = params[0] if params else None
-                return pd.DataFrame({"cnt": [10]}) if emp == "EMP001" else pd.DataFrame({"cnt": [0]})
+            params = params or []
             if "PayPeriodHours" in query:
-                return pd.DataFrame({"PayPeriodHours": [8.0]})
-            if "Time_Card WHERE TimeCardID" in query:
-                return pd.DataFrame({"TimeCardID": ["x"]})
-            if "Schedule WHERE ScheduleID" in query:
+                return pd.DataFrame({"EmployeeCode": params, "PayPeriodHours": [8.0] * len(params)})
+            if "COUNT(*) AS cnt" in query:
+                emp_codes = params[:-1]
+                rows = [{"EmployeeCode": ec, "cnt": 10 if ec == "EMP001" else 0} for ec in emp_codes if ec == "EMP001"]
+                return pd.DataFrame(rows) if rows else empty_df()
+            if "ScheduleID" in query:
                 return empty_df()
-            if "INSERT INTO dbo.Schedule" in query and params:
-                emp = params[1]
-                inserts_by_emp[emp] = inserts_by_emp.get(emp, 0) + 1
+            if "TimeCardID" in query:
+                emp_codes = params[:-1]
+                return pd.DataFrame({"TimeCardID": [f"TCARD{ec}{params[-1]}" for ec in emp_codes]})
             return None
 
         with patch(PATCH, side_effect=side_effect):
-            result = autoAllocateSalariedEmployees(make_conn(), "20250430", "20250421", ["EMP001", "EMP002"])
+            result = autoAllocateSalariedEmployees(conn, "20250430", "20250421", ["EMP001", "EMP002"])
+
+        inserts_by_emp = {}
+        for r in self._schedule_rows_from_executemany(conn):
+            emp = r[1]
+            inserts_by_emp[emp] = inserts_by_emp.get(emp, 0) + 1
 
         assert "EMP001" not in result
         assert "EMP002" in result
+        assert inserts_by_emp.get("EMP001", 0) == 0
+        assert inserts_by_emp.get("EMP002", 0) == 10
         assert inserts_by_emp.get("EMP001", 0) == 0
         assert inserts_by_emp.get("EMP002", 0) == 10
 
