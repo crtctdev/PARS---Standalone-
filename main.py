@@ -262,8 +262,10 @@ if not login:
     st.error(f"Your account ({user['email']}) is not set up in the system. Please contact your administrator.")
     st.stop()
 
-ADMINS = {"mapheyp@crtct.org", "caristinosm@crtct.org"}
-isAdmin = user["email"].lower() in ADMINS
+#this is only temporary eventually just store them in db 
+admins_df = run_query(conn, "SELECT * FROM dbo.Admins")
+admin_emails = set(admins_df["WorkEmail"].str.lower().tolist()) if admins_df is not None and not admins_df.empty else set()
+isAdmin = user["email"].lower() in admin_emails
 isManager = isAdmin or login[0].isManager()
 
 if st.session_state.db_employee_codes is None:
