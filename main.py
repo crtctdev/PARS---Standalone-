@@ -42,7 +42,7 @@ if st.session_state.user is None:
             st.session_state.user = {
                 "name": claims.get("name"),
                 #Throw in here to spoof as other people
-                "email": "johnsonjm@crtct.org",
+                "email": claims.get("preferred_username"),
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()
@@ -262,9 +262,9 @@ if not login:
     st.error(f"Your account ({user['email']}) is not set up in the system. Please contact your administrator.")
     st.stop()
 
-#this is only temporary eventually just store them in db 
+
 admins_df = run_query(conn, "SELECT * FROM dbo.Admins")
-admin_emails = set(admins_df["WorkEmail"].str.lower().tolist()) if admins_df is not None and not admins_df.empty else set()
+admin_emails = set(admins_df["Email"].str.lower().tolist()) if admins_df is not None and not admins_df.empty else set()
 isAdmin = user["email"].lower() in admin_emails
 isManager = isAdmin or login[0].isManager()
 
@@ -345,6 +345,40 @@ with sidebar_col:
                     st.session_state.import_message = ("success", f"Successfully imported {added} records.{auto_msg}")
 
                 st.rerun()
+
+        @st.fragment
+        def export_section():
+            st.markdown('<p class="sidebar-label">Export</p>', unsafe_allow_html=True)
+            all_periods = getPayPeriods(conn)
+            selected_periods = st.multiselect("Pay Period(s)", options=all_periods, label_visibility="collapsed")
+
+            periods_key = tuple(sorted(selected_periods))
+            if periods_key != st.session_state.get("export_periods_key"):
+                st.session_state.export_periods_key = periods_key
+                if selected_periods:
+                    def to_db_period(p):
+                        parts = p.split("/")
+                        return f"{parts[2]}{parts[0]}{parts[1]}"
+                    frames = [run_query(conn, "SELECT * FROM dbo.fn_GetExport(?)", [to_db_period(p)]) for p in selected_periods]
+                    valid = [f for f in frames if f is not None and not f.empty]
+                    export_df = pd.concat(valid, ignore_index=True) if valid else pd.DataFrame()
+                    if not export_df.empty:
+                        buf = io.BytesIO()
+                        export_df.to_excel(buf, index=False)
+                        st.session_state.export_bytes = buf.getvalue()
+                    else:
+                        st.session_state.export_bytes = None
+                else:
+                    st.session_state.export_bytes = None
+
+            if selected_periods:
+                if st.session_state.get("export_bytes"):
+                    st.download_button("⬇️ Export to Excel", data=st.session_state.export_bytes, file_name="pars_export.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                else:
+                    st.warning("No data found for the selected pay period(s).")
+
+        export_section()
+
     ctrl1, ctrl2 = st.columns([1, 1])
 
 # ── MAIN CONTENT ──────────────────────────────────────────────────────────────

@@ -66,10 +66,13 @@ def run_query(conn, query, params=None):
         if cursor.description is not None:
             columns = [col[0] for col in cursor.description]
             rows = cursor.fetchall()
-            return pd.DataFrame.from_records(rows, columns=columns)
+            result = pd.DataFrame.from_records(rows, columns=columns)
         else:
             conn.commit()
-            return None
+            result = None
+
+        cursor.close()
+        return result
 
     except Exception as e:
         print(f"[run_query] ERROR: {e}\nQuery: {query}\nParams: {params}")
@@ -95,6 +98,9 @@ def setLoggedInUser(conn, user):
     df = run_query(conn, """
      SELECT * FROM dbo.fn_GetEmployee(?);
     """, [user['email']])
+
+    if df is None or df.empty:
+        return []
 
     return [Employee(
         row["EmployeeCode"],
