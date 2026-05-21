@@ -42,7 +42,7 @@ if st.session_state.user is None:
             st.session_state.user = {
                 "name": claims.get("name"),
                 #Throw in here to spoof as other people
-                "email": "mapheyp@crtct.org",
+                "email": "johnsonjm@crtct.org",
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()
@@ -262,10 +262,9 @@ if not login:
     st.error(f"Your account ({user['email']}) is not set up in the system. Please contact your administrator.")
     st.stop()
 
-if login[0].work_email.lower() == "mapheyp@crtct.org":
-    isManager = True
-else:
-    isManager = login[0].isManager()
+ADMINS = {"mapheyp@crtct.org", "caristinosm@crtct.org"}
+isAdmin = user["email"].lower() in ADMINS
+isManager = isAdmin or login[0].isManager()
 
 if st.session_state.db_employee_codes is None:
     emp_df = run_query(conn, "SELECT EmployeeCode FROM dbo.vw_EmployeeInformation")
@@ -295,7 +294,7 @@ with sidebar_col:
                     st.session_state.active_page = page
                     st.rerun()
 
-    if isManager and user["email"].lower() == "mapheyp@crtct.org":
+    if isAdmin:
         st.markdown('<p class="sidebar-label">Import</p>', unsafe_allow_html=True)
 
         if st.session_state.import_message:
