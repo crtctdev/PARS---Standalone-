@@ -79,12 +79,12 @@ def render(conn, user, login):
             col3.markdown("**Pay Type**")
             col4.markdown("**Total Hours**")
             col5.markdown("**Percentage**")
-            col6.markdown("**Allocations Made**")
-            col7.markdown("**Fund Code Breakdown**")
+            col6.markdown("<div style='text-align:center'><b>Allocations Made</b></div>", unsafe_allow_html=True)
+            col7.markdown("<div style='text-align:center'><b>Fund Code Breakdown</b></div>", unsafe_allow_html=True)
 
             st.markdown("""
             <style>
-            .fund-tooltip { position: relative; display: flex; justify-content: center; cursor: help; }
+            .fund-tooltip { position: relative; display: inline-block; cursor: help; }
             .fund-tooltip .tooltiptext {
                 visibility: hidden; opacity: 0;
                 background-color: #1e293b; color: #fff;
@@ -125,7 +125,7 @@ def render(conn, user, login):
                         for f in fund_allocations
                     ]
                     tooltip_content = "<br>".join(lines)
-                    breakdown_html = f'''<div style="display:flex; justify-content:center;">
+                    breakdown_html = f'''<div style="text-align:center;">
                         <span class="fund-tooltip">
                             <span style="font-size:20px;">ℹ️</span>
                             <span class="tooltiptext">{tooltip_content}</span>
@@ -142,7 +142,8 @@ def render(conn, user, login):
                 col3.write(row["PayType"])
                 col4.write(row["TotalHours"])
                 col5.write(f"{row['Percentage']}%")
-                col6.checkbox("", value=has_records, disabled=True, key=f"alloc_check_{schedule_id}")
+                check_html = f'<div style="text-align:center; padding-top:4px;"><input type="checkbox" {"checked" if has_records else ""} disabled style="width:16px; height:16px; accent-color:#3b82f6; cursor:default;"></div>'
+                col6.markdown(check_html, unsafe_allow_html=True)
                 col7.markdown(breakdown_html, unsafe_allow_html=True)
                 st.markdown("---")
                 if st.session_state[key]:
