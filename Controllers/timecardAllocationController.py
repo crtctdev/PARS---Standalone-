@@ -567,6 +567,47 @@ def saveAllocations(conn, schedule_id, edited_df):
     return edited_df
 
 
+def saveNote(conn, employee_code, note_date, edited_df):
+    # Expected table:
+    # CREATE TABLE dbo.Notes (
+    #   ID INT PRIMARY KEY, EmployeeCode VARCHAR(50),
+    #   Date VARCHAR(8), Task VARCHAR(200), Fund VARCHAR(200),
+    #   Hours DECIMAL(10,2), CreatedAt DATETIME DEFAULT GETDATE()
+    # )
+    max_id_df = run_query(conn, "SELECT ISNULL(MAX(ID), 0) AS max_id FROM dbo.Notes")
+    next_id = int(max_id_df.iloc[0, 0]) + 1
+    edited_df = edited_df.dropna(how="all").copy()
+    edited_df["Hours"] = pd.to_numeric(edited_df["Hours"], errors="coerce")
+
+    for idx, row in edited_df.iterrows():
+        if pd.isna(row["Hours"]):
+            continue
+        if pd.isna(row["ID"]) or row["ID"] == "":
+            run_query(conn, """
+                INSERT INTO dbo.Notes (ID, EmployeeCode, Date, Task, Fund, Hours)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, [next_id, str(employee_code), note_date.strftime('%Y%m%d'),
+                  str(row["Task"]), str(row["Fund"]), float(row["Hours"])])
+            edited_df.at[idx, "ID"] = next_id
+            next_id += 1
+        else:
+            run_query(conn, """
+                UPDATE dbo.Notes SET Task=?, Fund=?, Hours=? WHERE ID=?
+            """, [str(row["Task"]), str(row["Fund"]), float(row["Hours"]), int(row["ID"])])
+    return edited_df
+
+
+def getNotes(conn, employee_code, note_date):
+    return run_query(conn, """
+        SELECT ID, Task, Fund, Hours FROM dbo.Notes
+        WHERE EmployeeCode = ? AND Date = ?
+    """, [str(employee_code), note_date.strftime('%Y%m%d')])
+
+
+def deleteNote(conn, note_id):
+    run_query(conn, "DELETE FROM dbo.Notes WHERE ID = ?", [int(note_id)])
+
+
 def deleteRecord(conn, recordID):
     """
     Deletes a Record entry from the database by its ID.

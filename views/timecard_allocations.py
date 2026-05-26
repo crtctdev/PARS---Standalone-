@@ -185,7 +185,7 @@ def render(conn, user, login):
 
                         if is_regular:
                             if not has_records and fund_allocations:
-                                if st.button("⚡ Auto Allocate", key=f"auto_{schedule_id}"):
+                                if st.button("Auto Allocate", key=f"auto_{schedule_id}"):
                                     auto_task = next((t for t in task_options if t.startswith("O:")), task_options[0] if task_options else "")
                                     auto_rows = []
                                     for alloc in fund_allocations:
