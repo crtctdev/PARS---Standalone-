@@ -23,6 +23,65 @@ def getPayPeriods(conn):
     return [f"{d[4:6]}/{d[6:8]}/{d[0:4]}" for d in payPeriods]
 
 
+def autoAllocateNonRegularRecords(conn, non_regular_entries, work_email_map):
+    if not non_regular_entries:
+        return
+
+    task_df = run_query(conn, "SELECT Code, Description FROM dbo.Activities WHERE Code = 'O'")
+    if task_df is None or task_df.empty:
+        return
+    auto_task = f"{task_df.iloc[0]['Code']}:{task_df.iloc[0]['Description']}"
+
+    employee_codes = list({ec for _, ec, _ in non_regular_entries})
+    work_emails = [work_email_map[ec] for ec in employee_codes if ec in work_email_map]
+    if not work_emails:
+        return
+
+    placeholders = ','.join(['?' for _ in work_emails])
+    fund_alloc_df = run_query(conn, f"""
+        SELECT LOWER(WorkEmail) AS WorkEmail, FundCode, Percentage
+        FROM CRT_INFO.dbo.ADUsers
+        WHERE LOWER(WorkEmail) IN ({placeholders})
+    """, [e.lower() for e in work_emails])
+    if fund_alloc_df is None or fund_alloc_df.empty:
+        return
+
+    fund_codes = fund_alloc_df["FundCode"].unique().tolist()
+    placeholders2 = ','.join(['?' for _ in fund_codes])
+    fund_desc_df = run_query(conn, f"SELECT FundCode, FundDescription FROM dbo.Funds WHERE FundCode IN ({placeholders2})", fund_codes)
+    fund_desc_map = {}
+    if fund_desc_df is not None and not fund_desc_df.empty:
+        fund_desc_map = {r["FundCode"]: r["FundDescription"] for _, r in fund_desc_df.iterrows()}
+
+    from collections import defaultdict
+    email_fund_map = defaultdict(list)
+    for _, r in fund_alloc_df.iterrows():
+        desc = fund_desc_map.get(r["FundCode"], r["FundCode"])
+        email_fund_map[r["WorkEmail"]].append({"fund_option": f"{r['FundCode']}:{desc}", "percentage": float(r["Percentage"])})
+
+    email_by_code = {ec: work_email_map[ec].lower() for ec in employee_codes if ec in work_email_map}
+
+    max_id_df = run_query(conn, "SELECT ISNULL(MAX(ID), 0) AS max_id FROM dbo.Record")
+    next_id = int(max_id_df.iloc[0, 0]) + 1
+
+    record_rows = []
+    for schedule_id, employee_code, total_hours in non_regular_entries:
+        total_hours = float(total_hours)
+        work_email = email_by_code.get(employee_code, "")
+        for alloc in email_fund_map.get(work_email, []):
+            hours = round(total_hours * alloc["percentage"] / 100, 2)
+            record_rows.append((auto_task, alloc["fund_option"], hours, next_id, schedule_id))
+            next_id += 1
+
+    if record_rows:
+        cursor = conn.cursor()
+        cursor.executemany(
+            "INSERT INTO dbo.Record (Task, Fund, Hours, ID, ScheduleID) VALUES (?, ?, ?, ?, ?)",
+            record_rows
+        )
+        conn.commit()
+
+
 def importTimeCards(df, conn):
     """
     Processes a timecard export DataFrame and persists the results to the Schedule and Time_Card tables.
@@ -77,12 +136,14 @@ def importTimeCards(df, conn):
 
     employee_codes = [str(c).strip() for c in df["EECode"].unique()]
 
-    # Bulk fetch PayPeriodHours for all employees in one query
+    # Bulk fetch PayPeriodHours and WorkEmail for all employees in one query
     placeholders = ','.join(['?' for _ in employee_codes])
-    hours_df = run_query(conn, f"SELECT EmployeeCode, PayPeriodHours FROM dbo.vw_EmployeeInformation WHERE EmployeeCode IN ({placeholders})", employee_codes)
+    hours_df = run_query(conn, f"SELECT EmployeeCode, PayPeriodHours, WorkEmail FROM dbo.vw_EmployeeInformation WHERE EmployeeCode IN ({placeholders})", employee_codes)
     hours_map = {}
+    work_email_map = {}
     if hours_df is not None and not hours_df.empty:
         hours_map = {str(r["EmployeeCode"]).strip(): r["PayPeriodHours"] for _, r in hours_df.iterrows()}
+        work_email_map = {str(r["EmployeeCode"]).strip(): str(r["WorkEmail"]).strip() for _, r in hours_df.iterrows()}
 
     # Bulk fetch all earn code descriptions in one query
     earn_df = run_query(conn, "SELECT Typecode, Typedesc FROM dbo.PaycomEarnCodes")
@@ -118,6 +179,7 @@ def importTimeCards(df, conn):
 
     processed = set()
     schedule_rows = []
+    non_regular_entries = []  # (scheduleID, employeeCode, totalHours)
 
     for (employeecode, date), daydf in df.groupby(["EECode", "Date"]):
         employeecode = str(employeecode).strip()
@@ -142,7 +204,9 @@ def importTimeCards(df, conn):
                 existing_records.append(schedualID)
                 continue
 
+            earn_hours = float(earn_hours)
             schedule_rows.append((schedualID, employeecode, date.strftime('%Y%m%d'), str(pay_type), earn_hours, percentage, timeCardID))
+            non_regular_entries.append((schedualID, employeecode, earn_hours))
             existing_schedule_ids.add(schedualID)
             records_added += 1
 
@@ -193,6 +257,8 @@ def importTimeCards(df, conn):
             schedule_rows
         )
         conn.commit()
+
+    autoAllocateNonRegularRecords(conn, non_regular_entries, work_email_map)
 
     return existing_records, missing_employees, records_added, max_date_str, min_date_str
 

@@ -224,7 +224,7 @@ class TestImportTimeCards:
             "EarnCode": earn_code,
         }])
 
-    def _side(self, period_df=None, hours=8.0, existing_tc=True, existing_sched_ids=None, earn_codes=None):
+    def _side(self, period_df=None, hours=8.0, existing_tc=True, existing_sched_ids=None, earn_codes=None, work_email="emp001@test.com"):
         """Factory for standard side_effect functions."""
         def side_effect(conn, query, params=None):
             if "vw_PayPeriods" in query:
@@ -237,10 +237,13 @@ class TestImportTimeCards:
             if "vw_EmployeeInformation" in query:
                 if hours is None:
                     return empty_df()
-                return pd.DataFrame({"EmployeeCode": ["EMP001"], "PayPeriodHours": [hours]})
+                return pd.DataFrame({"EmployeeCode": ["EMP001"], "PayPeriodHours": [hours], "WorkEmail": [work_email]})
             if "PaycomEarnCodes" in query:
                 codes = earn_codes or {}
                 return pd.DataFrame({"Typecode": list(codes.keys()), "Typedesc": list(codes.values())})
+            # autoAllocateNonRegularRecords queries — return empty to short-circuit in importTimeCards tests
+            if "Activities" in query:
+                return empty_df()
             return None
         return side_effect
 
@@ -364,6 +367,205 @@ class TestImportTimeCards:
         for date_str in inserted_dates:
             dt = datetime.strptime(date_str, "%Y%m%d")
             assert dt.weekday() < 5, f"{date_str} is a weekend"
+
+    def test_non_regular_earn_hours_stored_as_python_float(self):
+        """EarnHours from a numpy DataFrame must be cast to Python float before cursor.executemany — pyodbc rejects numpy types."""
+        from Controllers.timecardAllocationController import importTimeCards
+
+        df = make_df([{"EECode": "EMP001", "InPunchTime": "2025-04-30", "EarnHours": np.int64(4), "EarnCode": "OT"}])
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(earn_codes={"OT": "Overtime"})):
+            importTimeCards(df, conn)
+
+        non_reg_rows = []
+        for c in conn.cursor.return_value.executemany.call_args_list:
+            query, rows = c[0]
+            if "Schedule" in query:
+                non_reg_rows.extend(r for r in rows if r[3] != "Regular")
+
+        assert len(non_reg_rows) >= 1
+        assert type(non_reg_rows[0][4]) is float
+
+    def test_non_regular_entries_forwarded_to_auto_allocate(self):
+        """Non-regular schedule rows inserted during import must be passed to autoAllocateNonRegularRecords."""
+        from Controllers.timecardAllocationController import importTimeCards
+
+        df = make_df([{"EECode": "EMP001", "InPunchTime": "2025-04-30", "EarnHours": 4.0, "EarnCode": "OT"}])
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(earn_codes={"OT": "Overtime"})):
+            with patch("Controllers.timecardAllocationController.autoAllocateNonRegularRecords") as mock_auto:
+                importTimeCards(df, conn)
+
+        mock_auto.assert_called_once()
+        entries_arg = mock_auto.call_args[0][1]
+        assert len(entries_arg) >= 1
+        assert entries_arg[0][0].startswith("SCHEMP001")
+
+
+# ── autoAllocateNonRegularRecords ─────────────────────────────────────────────
+
+class TestAutoAllocateNonRegularRecords:
+
+    def _entries(self, schedule_id="SCH001", employee_code="EMP001", total_hours=4.0):
+        return [(schedule_id, employee_code, total_hours)]
+
+    def _email_map(self, code="EMP001", email="emp001@test.com"):
+        return {code: email}
+
+    def _side(self, has_task=True, fund_allocs=None, fund_descs=None, max_id=0):
+        def side_effect(conn, query, params=None):
+            if "Activities" in query:
+                if not has_task:
+                    return empty_df()
+                return pd.DataFrame({"Code": ["O"], "Description": ["Other Hours"]})
+            if "ADUsers" in query:
+                rows = fund_allocs if fund_allocs is not None else [{"WorkEmail": "emp001@test.com", "FundCode": "F01", "Percentage": 100.0}]
+                return pd.DataFrame(rows) if rows else empty_df()
+            if "Funds" in query:
+                rows = fund_descs if fund_descs is not None else [{"FundCode": "F01", "FundDescription": "General Fund"}]
+                return pd.DataFrame(rows) if rows else empty_df()
+            if "MAX(ID)" in query:
+                return pd.DataFrame({"max_id": [max_id]})
+            return None
+        return side_effect
+
+    def _record_rows(self, conn):
+        rows = []
+        for c in conn.cursor.return_value.executemany.call_args_list:
+            query, batch = c[0]
+            if "Record" in query:
+                rows.extend(batch)
+        return rows
+
+    def test_does_nothing_when_entries_empty(self):
+        """When non_regular_entries is empty the function should return immediately with no DB queries."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        with patch(PATCH) as mock_rq:
+            autoAllocateNonRegularRecords(make_conn(), [], self._email_map())
+        assert mock_rq.call_count == 0
+
+    def test_does_nothing_when_task_not_found(self):
+        """When Activities has no 'O' row the function should return early with no Record inserts."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(has_task=False)):
+            autoAllocateNonRegularRecords(conn, self._entries(), self._email_map())
+        assert len(self._record_rows(conn)) == 0
+
+    def test_does_nothing_when_employee_has_no_work_email(self):
+        """An employee not in work_email_map should produce no Record inserts."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side()):
+            autoAllocateNonRegularRecords(conn, self._entries(), {})
+        assert len(self._record_rows(conn)) == 0
+
+    def test_does_nothing_when_no_fund_allocations(self):
+        """When ADUsers returns no rows for the employee email, no Record inserts should fire."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side(fund_allocs=[])):
+            autoAllocateNonRegularRecords(conn, self._entries(), self._email_map())
+        assert len(self._record_rows(conn)) == 0
+
+    def test_inserts_one_record_per_fund(self):
+        """Two funds in the breakdown should produce exactly two Record rows."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        fund_allocs = [
+            {"WorkEmail": "emp001@test.com", "FundCode": "F01", "Percentage": 60.0},
+            {"WorkEmail": "emp001@test.com", "FundCode": "F02", "Percentage": 40.0},
+        ]
+        fund_descs = [
+            {"FundCode": "F01", "FundDescription": "General Fund"},
+            {"FundCode": "F02", "FundDescription": "Special Fund"},
+        ]
+        with patch(PATCH, side_effect=self._side(fund_allocs=fund_allocs, fund_descs=fund_descs)):
+            autoAllocateNonRegularRecords(conn, self._entries(), self._email_map())
+        assert len(self._record_rows(conn)) == 2
+
+    def test_hours_calculated_from_percentage(self):
+        """Hours for each record should be total_hours * percentage / 100, rounded to 2dp."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side()):  # 100% of 4.0h → 4.0h
+            autoAllocateNonRegularRecords(conn, self._entries(total_hours=4.0), self._email_map())
+        assert self._record_rows(conn)[0][2] == 4.0
+
+    def test_hours_split_correctly_across_funds(self):
+        """A 60/40 split on 10 hours should produce 6.0h and 4.0h records."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        fund_allocs = [
+            {"WorkEmail": "emp001@test.com", "FundCode": "F01", "Percentage": 60.0},
+            {"WorkEmail": "emp001@test.com", "FundCode": "F02", "Percentage": 40.0},
+        ]
+        fund_descs = [
+            {"FundCode": "F01", "FundDescription": "General Fund"},
+            {"FundCode": "F02", "FundDescription": "Special Fund"},
+        ]
+        with patch(PATCH, side_effect=self._side(fund_allocs=fund_allocs, fund_descs=fund_descs)):
+            autoAllocateNonRegularRecords(conn, self._entries(total_hours=10.0), self._email_map())
+        hours = sorted(r[2] for r in self._record_rows(conn))
+        assert hours == [4.0, 6.0]
+
+    def test_task_format_is_code_colon_description(self):
+        """Task stored in each Record must be 'O:Other Hours' — code and description joined by colon."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side()):
+            autoAllocateNonRegularRecords(conn, self._entries(), self._email_map())
+        assert self._record_rows(conn)[0][0] == "O:Other Hours"
+
+    def test_fund_format_is_code_colon_description(self):
+        """Fund stored in each Record must be 'FundCode:FundDescription' — matching the UI selectbox format."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side()):
+            autoAllocateNonRegularRecords(conn, self._entries(), self._email_map())
+        assert self._record_rows(conn)[0][1] == "F01:General Fund"
+
+    def test_record_ids_are_sequential_from_max(self):
+        """Record IDs must start at max_id + 1 and increment by 1 for each row."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        fund_allocs = [
+            {"WorkEmail": "emp001@test.com", "FundCode": "F01", "Percentage": 60.0},
+            {"WorkEmail": "emp001@test.com", "FundCode": "F02", "Percentage": 40.0},
+        ]
+        fund_descs = [
+            {"FundCode": "F01", "FundDescription": "General Fund"},
+            {"FundCode": "F02", "FundDescription": "Special Fund"},
+        ]
+        with patch(PATCH, side_effect=self._side(fund_allocs=fund_allocs, fund_descs=fund_descs, max_id=5)):
+            autoAllocateNonRegularRecords(conn, self._entries(), self._email_map())
+        ids = [r[3] for r in self._record_rows(conn)]
+        assert ids == [6, 7]
+
+    def test_schedule_id_assigned_to_record(self):
+        """Each inserted Record row must carry the ScheduleID of its parent schedule entry."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side()):
+            autoAllocateNonRegularRecords(conn, self._entries(schedule_id="SCH_XYZ"), self._email_map())
+        assert self._record_rows(conn)[0][4] == "SCH_XYZ"
+
+    def test_multiple_schedule_entries_all_get_records(self):
+        """Two non-regular schedule entries for the same employee should each receive one record (one fund)."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        entries = [("SCH001", "EMP001", 4.0), ("SCH002", "EMP001", 2.0)]
+        with patch(PATCH, side_effect=self._side()):
+            autoAllocateNonRegularRecords(conn, entries, self._email_map())
+        assert len(self._record_rows(conn)) == 2
+
+    def test_hours_are_python_float_not_numpy(self):
+        """Hours passed to the Record INSERT must be Python float — pyodbc rejects numpy.float64."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        with patch(PATCH, side_effect=self._side()):
+            autoAllocateNonRegularRecords(conn, self._entries(total_hours=np.float64(4.0)), self._email_map())
+        assert type(self._record_rows(conn)[0][2]) is float
 
 
 # ── autoAllocateSalariedEmployees ─────────────────────────────────────────────

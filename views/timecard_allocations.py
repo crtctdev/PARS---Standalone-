@@ -157,6 +157,11 @@ def render(conn, user, login):
 
                         editor_df = allocations_df[["ID", "Task", "Fund", "Hours"]].copy()
 
+                        is_regular = row["PayType"] == "Regular"
+
+                        if not is_regular:
+                            st.info(f"Editing is disabled for Pay Type: **{row['PayType']}**")
+
                         edited_df = st.data_editor(
                             editor_df,
                             column_order=["Task", "Fund", "Hours"],
@@ -166,7 +171,8 @@ def render(conn, user, login):
                                 "Fund": st.column_config.SelectboxColumn("Fund", options=fund_options),
                                 "Hours": st.column_config.NumberColumn("Hours", format="%.2f"),
                             },
-                            num_rows="dynamic",
+                            num_rows="dynamic" if is_regular else "fixed",
+                            disabled=not is_regular,
                             key=f"alloc_{schedule_id}",
                         )
 
@@ -177,20 +183,34 @@ def render(conn, user, login):
 
                         st.write(f"**Total Allocation: {total:.2f}**")
 
-                        if not hours_match:
-                            st.error("Allocated Hours Must Equate To Total Hours")
+                        if is_regular:
+                            if not has_records and fund_allocations:
+                                if st.button("⚡ Auto Allocate", key=f"auto_{schedule_id}"):
+                                    auto_task = next((t for t in task_options if t.startswith("O:")), task_options[0] if task_options else "")
+                                    auto_rows = []
+                                    for alloc in fund_allocations:
+                                        fund_option = next((f for f in fund_options if f.startswith(alloc["FundCode"] + ":")), alloc["FundCode"])
+                                        hours = round(total_hours * alloc["Percentage"] / 100, 2)
+                                        auto_rows.append({"ID": float("nan"), "Task": auto_task, "Fund": fund_option, "Hours": hours})
+                                    auto_df = pd.DataFrame(auto_rows, columns=["ID", "Task", "Fund", "Hours"])
+                                    saveAllocations(conn, schedule_id, auto_df)
+                                    st.success("✅ Auto-allocated successfully!")
+                                    st.rerun()
 
-                        if hours_match and st.button(
-                            "💾 Save Allocations",
-                            key=f"save_{schedule_id}",
-                        ):
-                            original_ids = set(allocations_df["ID"].dropna().astype(int))
-                            edited_ids = set(edited_df["ID"].dropna().astype(int))
-                            deleted_ids = original_ids - edited_ids
+                            if not hours_match:
+                                st.error("Allocated Hours Must Equate To Total Hours")
 
-                            for deleted_id in deleted_ids:
-                                deleteRecord(conn, int(deleted_id))
+                            if hours_match and st.button(
+                                "💾 Save Allocations",
+                                key=f"save_{schedule_id}",
+                            ):
+                                original_ids = set(allocations_df["ID"].dropna().astype(int))
+                                edited_ids = set(edited_df["ID"].dropna().astype(int))
+                                deleted_ids = original_ids - edited_ids
 
-                            saveAllocations(conn, schedule_id, edited_df)
-                            st.success("✅ Saved successfully!")  
+                                for deleted_id in deleted_ids:
+                                    deleteRecord(conn, int(deleted_id))
+
+                                saveAllocations(conn, schedule_id, edited_df)
+                                st.success("✅ Saved successfully!")  
                             
