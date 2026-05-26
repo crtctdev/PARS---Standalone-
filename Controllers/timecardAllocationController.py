@@ -608,6 +608,14 @@ def deleteNote(conn, note_id):
     run_query(conn, "DELETE FROM dbo.Notes WHERE ID = ?", [int(note_id)])
 
 
+def getAllNotesByEmployee(conn, employee_code):
+    return run_query(conn, """
+        SELECT Date, Task, Fund, Hours FROM dbo.Notes
+        WHERE EmployeeCode = ?
+        ORDER BY Date, ID
+    """, [str(employee_code)])
+
+
 def deleteRecord(conn, recordID):
     """
     Deletes a Record entry from the database by its ID.

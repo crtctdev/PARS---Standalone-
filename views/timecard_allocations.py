@@ -67,7 +67,6 @@ def render(conn, user, login):
         timecard_df = getSchedule(conn, employee_name.employee_code, pay_period)
         fund_options = getFundsByEmployee(conn, employee_name.employee_code)
         fund_allocations = getFundAllocations(conn, employee_name.work_email)
-
     if timecard_df.empty:
         st.caption("No records to display.")
     else:
@@ -118,19 +117,14 @@ def render(conn, user, login):
 
                 has_records = schedule_id in allocated_ids
                 total_hours = float(row["TotalHours"])
+
                 breakdown_html = ""
                 if fund_allocations:
-                    lines = [
-                        f"{f['FundCode']}: {round(total_hours * f['Percentage'] / 100, 2)}h ({f['Percentage']}%)"
-                        for f in fund_allocations
-                    ]
-                    tooltip_content = "<br>".join(lines)
-                    breakdown_html = f'''<div style="text-align:center;">
-                        <span class="fund-tooltip">
-                            <span style="font-size:20px;">ℹ️</span>
-                            <span class="tooltiptext">{tooltip_content}</span>
-                        </span>
-                    </div>'''
+                    lines = [f"{f['FundCode']}: {round(total_hours * f['Percentage'] / 100, 2)}h ({f['Percentage']}%)" for f in fund_allocations]
+                    breakdown_html = f'''<div style="text-align:center;"><span class="fund-tooltip">
+                        <span style="font-size:20px;">ℹ️</span>
+                        <span class="tooltiptext">{"<br>".join(lines)}</span>
+                    </span></div>'''
 
                 col1, col2, col3, col4, col5, col6, col7 = st.columns([0.5, 2, 2, 1.5, 1.5, 1.5, 1.2])
                 with col1:
