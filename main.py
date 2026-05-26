@@ -280,79 +280,65 @@ sidebar_col, main_col = st.columns([1, 5])
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with sidebar_col:
 
-    @st.fragment
-    def planning_calendar_section():
-        if "cal_open" not in st.session_state:
-            st.session_state.cal_open = False
-        if "cal_selected_date" not in st.session_state:
-            st.session_state.cal_selected_date = None
+    if "cal_open" not in st.session_state:
+        st.session_state.cal_open = False
+    if "cal_selected_date" not in st.session_state:
+        st.session_state.cal_selected_date = None
 
-        cal_arrow = "▼" if st.session_state.cal_open else "►"
-        if st.button(f"{cal_arrow} Planning Calendar", use_container_width=True, key="cal_toggle"):
-            st.session_state.cal_open = not st.session_state.cal_open
+    cal_arrow = "▼" if st.session_state.cal_open else "►"
+    if st.button(f"{cal_arrow} Planning Calendar", use_container_width=True, key="cal_toggle"):
+        st.session_state.cal_open = not st.session_state.cal_open
+        st.rerun()
 
-        if st.session_state.cal_open:
-            cal_result = st_calendar(
-                options={
-                    "initialView": "dayGridMonth",
-                    "headerToolbar": {"left": "prev,next", "center": "title", "right": ""},
-                    "height": 300,
-                    "selectable": True,
-                    "dayMaxEvents": True,
+    if st.session_state.cal_open:
+        cal_result = st_calendar(
+            options={
+                "initialView": "dayGridMonth",
+                "headerToolbar": {"left": "prev,next", "center": "title", "right": ""},
+                "height": 300,
+                "selectable": True,
+                "dayMaxEvents": True,
+            },
+            callbacks=["dateClick"],
+            key="planning_cal",
+        )
+
+        clicked = (cal_result or {}).get("dateClick", {}).get("date", "")
+        if clicked:
+            try:
+                st.session_state.cal_selected_date = date.fromisoformat(clicked[:10])
+            except ValueError:
+                pass
+
+        sel = st.session_state.cal_selected_date
+        if sel:
+            emp_code = login[0].employee_code
+            fund_options = getFundsByEmployee(conn, emp_code)
+            task_options = getTasks(conn)
+
+            existing = getNotes(conn, emp_code, sel)
+            notes_df = existing.copy() if existing is not None else pd.DataFrame(columns=["ID", "Task", "Fund", "Hours"])
+
+            edited_notes = st.data_editor(
+                notes_df[["ID", "Task", "Fund", "Hours"]],
+                column_order=["Task", "Fund", "Hours"],
+                column_config={
+                    "ID": None,
+                    "Task": st.column_config.SelectboxColumn("Task", options=task_options),
+                    "Fund": st.column_config.SelectboxColumn("Fund", options=fund_options),
+                    "Hours": st.column_config.NumberColumn("Hours", format="%.2f"),
                 },
-                callbacks=["dateClick"],
-                key="planning_cal",
+                num_rows="dynamic",
+                key=f"notes_editor_{sel}",
             )
 
-            clicked = (cal_result or {}).get("dateStr", "")
-            if clicked:
-                try:
-                    st.session_state.cal_selected_date = date.fromisoformat(clicked[:10])
-                except ValueError:
-                    pass
-
-            sel = st.session_state.cal_selected_date
-            if sel:
-                st.markdown(f"""
-                <div style="background:#f0f7ff; border-left:3px solid #3b82f6;
-                            border-radius:6px; padding:8px 12px; margin:8px 0 6px;">
-                    <span style="font-size:10px; color:#64748b; font-weight:700;
-                                 text-transform:uppercase; letter-spacing:.06em;">Selected</span><br>
-                    <span style="font-size:13px; font-weight:700; color:#0f172a;">
-                        {sel.strftime('%B %d, %Y')}
-                    </span>
-                </div>
-                """, unsafe_allow_html=True)
-
-                emp_code = login[0].employee_code
-                fund_options = getFundsByEmployee(conn, emp_code)
-                task_options = getTasks(conn)
-
-                existing = getNotes(conn, emp_code, sel)
-                notes_df = existing.copy() if existing is not None else pd.DataFrame(columns=["ID", "Task", "Fund", "Hours"])
-
-                edited_notes = st.data_editor(
-                    notes_df[["ID", "Task", "Fund", "Hours"]],
-                    column_order=["Task", "Fund", "Hours"],
-                    column_config={
-                        "ID": None,
-                        "Task": st.column_config.SelectboxColumn("Task", options=task_options),
-                        "Fund": st.column_config.SelectboxColumn("Fund", options=fund_options),
-                        "Hours": st.column_config.NumberColumn("Hours", format="%.2f"),
-                    },
-                    num_rows="dynamic",
-                    key=f"notes_editor_{sel}",
-                )
-
-                if st.button("💾 Save Notes", key="save_notes", use_container_width=True):
-                    original_ids = set(notes_df["ID"].dropna().astype(int))
-                    edited_ids = set(edited_notes["ID"].dropna().astype(int))
-                    for del_id in (original_ids - edited_ids):
-                        deleteNote(conn, int(del_id))
-                    saveNote(conn, emp_code, sel, edited_notes)
-                    st.success("Saved!")
-
-    planning_calendar_section()
+            if st.button("💾 Save Notes", key="save_notes", use_container_width=True):
+                original_ids = set(notes_df["ID"].dropna().astype(int))
+                edited_ids = set(edited_notes["ID"].dropna().astype(int))
+                for del_id in (original_ids - edited_ids):
+                    deleteNote(conn, int(del_id))
+                saveNote(conn, emp_code, sel, edited_notes)
+                st.success("Saved!")
 
     with st.expander("Employee Self Service", expanded=True):
         pages = [
