@@ -1,0 +1,71 @@
+﻿DepartmentCode,Description,ReportTo
+PLANIG,Planning,A1GQ
+PLANIG,Planning,A0WM
+SUPHOU,Supportive Housing,A0R2
+FINANC,Finance,A0OJ
+ENEADM,Energy Admin - Inactive,A1A8
+ECESUP,Support Services,A0ZI
+CMSRVA,Community Svc and Veteran Affairs,A1A8
+SHELTR,Shelter Services,A13U
+NUTRIT,Nutrition,A1BY
+HOUSHL,Housing and Shelter Services,A1A8
+MEADOW,Meadows,A01S
+CLNSRV,Clinical Services,A0WK
+CLNSRV,Clinical Services,A0XH
+ECEDUC,Early Childcare and Education,A1W0
+EXECUT,Executive,A1GQ
+COMSVC,Community Services,A01J
+ECESUP,Support Services,A1GQ
+NUTRIT,Nutrition,A1NC
+QUALTY,Quality Assurance,A0VR
+NUTRIT,Nutrition,A1GQ
+CLNSRV,Clinical Services,A0LH
+FACILT,Facilities,A1Q0
+SHELTR,Shelter Services,A1RL
+FINANC,Finance,A1M3
+OPERAT,Operations,A01S
+CLNSRV,Clinical Services,A13R
+CLNSRV,Clinical Services,A1GQ
+FACILT,Facilities,A063
+SUPHOU,Supportive Housing,A17A
+PLANIG,Planning,A12R
+HOUCOM,Housing and Community Services,A16B
+QUALTY,Quality Assurance,A0WM
+DELIVR,Delivery,A1BY
+INTECH,Information Technology,A1P2
+SHELTR,Shelter Services,A17A
+WEATHR,Weatherization,A01J
+CLNSRV,Clinical Services,
+RETRET,Retreat / RSVP,A0OW
+MIDADM,Middlesex Admin,A16B
+ECEDUC,Early Childcare and Education,A0KN
+HUMRES,Human Resources,A11K
+RETRET,Retreat / RSVP,A1UZ
+RETRET,Retreat / RSVP,A1JY
+SUPHOU,Supportive Housing,A1R2
+CLNSRV,Clinical Services,A1Y0
+SHELTR,Shelter Services,A063
+WEATHR,Weatherization,A0GV
+ENERGY,Energy,A0H9
+VETAFF,Veteran Affairs,A0SW
+VETAFF,Veteran Affairs,A01J
+RETRET,Retreat / RSVP,A1TD
+HUMRES,Human Resources,A1GQ
+ENERGY,Energy,
+ENERGY,Energy,A0IJ
+CLNSRV,Clinical Services,A1CV
+MIDADM,Middlesex Admin,
+SUPHOU,Supportive Housing,A0HH
+COMSVC,Community Services,A0F7
+ENERGY,Energy,A1VY
+MIDSEX,Middlesex Services,
+CLNSRV,Clinical Services,A1GG
+RETRET,Retreat / RSVP,A0WK
+ECEDUC,Early Childcare and Education,A0ZI
+ITADMN,Information Technology Admin,A16B
+FACILT,Facilities,A01S
+RETRET,Retreat / RSVP,A1I7
+SHELTR,Shelter Services,A1R2
+EXECUT,Executive,#N/A
+RETRET,Retreat / RSVP,A11S
+FINANC,Finance,A1GQ

@@ -829,3 +829,244 @@ class TestImportHistoryController:
             getImportHistory(make_conn())
         query = mock_rq.call_args[0][1]
         assert "DESC" in query
+
+
+# ── Notes functions ───────────────────────────────────────────────────────────
+
+class TestGetNotes:
+    def test_passes_employee_code_as_string(self):
+        """EmployeeCode param must be cast to str so integer codes don't cause a type mismatch."""
+        from Controllers.timecardAllocationController import getNotes
+        from datetime import date
+        with patch(PATCH) as mock_rq:
+            mock_rq.return_value = pd.DataFrame(columns=["ID", "Task", "Fund", "Hours"])
+            getNotes(make_conn(), 1234, date(2026, 5, 6))
+        params = mock_rq.call_args[0][2]
+        assert params[0] == "1234"
+
+    def test_passes_date_as_yyyymmdd(self):
+        """Date param must be formatted as YYYYMMDD to match the VARCHAR(8) storage format in dbo.Notes."""
+        from Controllers.timecardAllocationController import getNotes
+        from datetime import date
+        with patch(PATCH) as mock_rq:
+            mock_rq.return_value = pd.DataFrame(columns=["ID", "Task", "Fund", "Hours"])
+            getNotes(make_conn(), "EMP001", date(2026, 5, 6))
+        params = mock_rq.call_args[0][2]
+        assert params[1] == "20260506"
+
+    def test_returns_dataframe_from_query(self):
+        """Result should be the DataFrame returned by run_query, passed through unchanged."""
+        from Controllers.timecardAllocationController import getNotes
+        from datetime import date
+        expected = pd.DataFrame({"ID": [1], "Task": ["O:Task"], "Fund": ["F1:Fund"], "Hours": [4.0]})
+        with patch(PATCH, return_value=expected):
+            result = getNotes(make_conn(), "EMP001", date(2026, 5, 6))
+        assert result is expected
+
+    def test_returns_none_when_no_records(self):
+        """getNotes must pass through None when run_query finds no matching rows."""
+        from Controllers.timecardAllocationController import getNotes
+        from datetime import date
+        with patch(PATCH, return_value=None):
+            result = getNotes(make_conn(), "EMP001", date(2026, 5, 6))
+        assert result is None
+
+
+class TestDeleteNote:
+    def test_deletes_by_id(self):
+        """DELETE must target dbo.Notes and pass the correct note ID."""
+        from Controllers.timecardAllocationController import deleteNote
+        with patch(PATCH) as mock_rq:
+            deleteNote(make_conn(), 42)
+        query = mock_rq.call_args[0][1]
+        params = mock_rq.call_args[0][2]
+        assert "DELETE" in query.upper()
+        assert "Notes" in query
+        assert params[0] == 42
+
+    def test_id_cast_to_int(self):
+        """Note ID must be cast to Python int before being passed to run_query."""
+        from Controllers.timecardAllocationController import deleteNote
+        with patch(PATCH) as mock_rq:
+            deleteNote(make_conn(), 7.0)
+        params = mock_rq.call_args[0][2]
+        assert isinstance(params[0], int)
+        assert params[0] == 7
+
+
+class TestGetAllNotesByEmployee:
+    def test_passes_employee_code_as_string(self):
+        """EmployeeCode must be passed as a string even when an integer is supplied."""
+        from Controllers.timecardAllocationController import getAllNotesByEmployee
+        with patch(PATCH) as mock_rq:
+            mock_rq.return_value = pd.DataFrame(columns=["Date", "Task", "Fund", "Hours"])
+            getAllNotesByEmployee(make_conn(), 1234)
+        params = mock_rq.call_args[0][2]
+        assert params[0] == "1234"
+
+    def test_query_orders_by_date(self):
+        """Results must be ordered by Date so calendar event rendering is deterministic."""
+        from Controllers.timecardAllocationController import getAllNotesByEmployee
+        with patch(PATCH) as mock_rq:
+            mock_rq.return_value = pd.DataFrame(columns=["Date", "Task", "Fund", "Hours"])
+            getAllNotesByEmployee(make_conn(), "EMP001")
+        query = mock_rq.call_args[0][1]
+        assert "ORDER BY" in query.upper()
+        assert "Date" in query
+
+    def test_returns_dataframe(self):
+        """Should return the DataFrame produced by run_query directly."""
+        from Controllers.timecardAllocationController import getAllNotesByEmployee
+        expected = pd.DataFrame({"Date": ["20260506"], "Task": ["O:Task"], "Fund": ["F1:Fund"], "Hours": [8.0]})
+        with patch(PATCH, return_value=expected):
+            result = getAllNotesByEmployee(make_conn(), "EMP001")
+        assert result is expected
+
+
+class TestSaveNote:
+    def _make_new_row_df(self):
+        return pd.DataFrame([{"ID": float("nan"), "Task": "O:Task", "Fund": "F1:Fund", "Hours": 4.0}])
+
+    def _make_existing_row_df(self):
+        return pd.DataFrame([{"ID": 5.0, "Task": "O:Task", "Fund": "F1:Fund", "Hours": 4.0}])
+
+    def test_insert_uses_next_id(self):
+        """New rows (NaN ID) must be inserted with next_id = max(ID) + 1."""
+        from Controllers.timecardAllocationController import saveNote
+        from datetime import date
+        max_df = pd.DataFrame({"max_id": [9]})
+
+        calls = []
+        def side_effect(conn, query, params=None):
+            calls.append((query, params))
+            if "MAX(ID)" in query:
+                return max_df
+            return None
+
+        with patch(PATCH, side_effect=side_effect):
+            saveNote(make_conn(), "EMP001", date(2026, 5, 6), self._make_new_row_df())
+
+        insert_call = next((c for c in calls if "INSERT" in c[0].upper()), None)
+        assert insert_call is not None
+        assert insert_call[1][0] == 10  # next_id = 9 + 1
+
+    def test_insert_passes_yyyymmdd_date(self):
+        """Date stored in dbo.Notes must be formatted as YYYYMMDD VARCHAR."""
+        from Controllers.timecardAllocationController import saveNote
+        from datetime import date
+        max_df = pd.DataFrame({"max_id": [0]})
+
+        calls = []
+        def side_effect(conn, query, params=None):
+            calls.append((query, params))
+            return max_df if "MAX(ID)" in query else None
+
+        with patch(PATCH, side_effect=side_effect):
+            saveNote(make_conn(), "EMP001", date(2026, 5, 6), self._make_new_row_df())
+
+        insert_call = next((c for c in calls if "INSERT" in c[0].upper()), None)
+        assert insert_call[1][2] == "20260506"
+
+    def test_insert_passes_employee_code_as_string(self):
+        """EmployeeCode must be stored as a string regardless of input type."""
+        from Controllers.timecardAllocationController import saveNote
+        from datetime import date
+        max_df = pd.DataFrame({"max_id": [0]})
+
+        calls = []
+        def side_effect(conn, query, params=None):
+            calls.append((query, params))
+            return max_df if "MAX(ID)" in query else None
+
+        with patch(PATCH, side_effect=side_effect):
+            saveNote(make_conn(), 1234, date(2026, 5, 6), self._make_new_row_df())
+
+        insert_call = next((c for c in calls if "INSERT" in c[0].upper()), None)
+        assert insert_call[1][1] == "1234"
+
+    def test_insert_hours_as_float(self):
+        """Hours must be stored as a Python float, not a numpy scalar."""
+        from Controllers.timecardAllocationController import saveNote
+        from datetime import date
+        max_df = pd.DataFrame({"max_id": [0]})
+
+        calls = []
+        def side_effect(conn, query, params=None):
+            calls.append((query, params))
+            return max_df if "MAX(ID)" in query else None
+
+        with patch(PATCH, side_effect=side_effect):
+            saveNote(make_conn(), "EMP001", date(2026, 5, 6), self._make_new_row_df())
+
+        insert_call = next((c for c in calls if "INSERT" in c[0].upper()), None)
+        assert isinstance(insert_call[1][5], float)
+
+    def test_skips_rows_with_nan_hours(self):
+        """Rows where Hours is NaN must not generate any INSERT or UPDATE call."""
+        from Controllers.timecardAllocationController import saveNote
+        from datetime import date
+        nan_df = pd.DataFrame([{"ID": float("nan"), "Task": "O:Task", "Fund": "F1:Fund", "Hours": float("nan")}])
+        max_df = pd.DataFrame({"max_id": [0]})
+
+        calls = []
+        def side_effect(conn, query, params=None):
+            calls.append((query, params))
+            return max_df if "MAX(ID)" in query else None
+
+        with patch(PATCH, side_effect=side_effect):
+            saveNote(make_conn(), "EMP001", date(2026, 5, 6), nan_df)
+
+        assert not any("INSERT" in c[0].upper() for c in calls)
+        assert not any("UPDATE" in c[0].upper() for c in calls)
+
+    def test_update_existing_row(self):
+        """Rows with a valid ID must trigger UPDATE, not INSERT."""
+        from Controllers.timecardAllocationController import saveNote
+        from datetime import date
+        max_df = pd.DataFrame({"max_id": [5]})
+
+        calls = []
+        def side_effect(conn, query, params=None):
+            calls.append((query, params))
+            return max_df if "MAX(ID)" in query else None
+
+        with patch(PATCH, side_effect=side_effect):
+            saveNote(make_conn(), "EMP001", date(2026, 5, 6), self._make_existing_row_df())
+
+        assert any("UPDATE" in c[0].upper() for c in calls)
+        assert not any("INSERT" in c[0].upper() for c in calls)
+
+    def test_update_passes_correct_id(self):
+        """UPDATE WHERE ID=? must receive the row's ID cast to int."""
+        from Controllers.timecardAllocationController import saveNote
+        from datetime import date
+        max_df = pd.DataFrame({"max_id": [5]})
+
+        calls = []
+        def side_effect(conn, query, params=None):
+            calls.append((query, params))
+            return max_df if "MAX(ID)" in query else None
+
+        with patch(PATCH, side_effect=side_effect):
+            saveNote(make_conn(), "EMP001", date(2026, 5, 6), self._make_existing_row_df())
+
+        update_call = next((c for c in calls if "UPDATE" in c[0].upper()), None)
+        assert update_call[1][-1] == 5  # ID is last param in UPDATE ... WHERE ID=?
+
+    def test_skips_all_nan_rows(self):
+        """Rows that are entirely NaN (dropped by dropna) must not generate any DB calls beyond MAX(ID)."""
+        from Controllers.timecardAllocationController import saveNote
+        from datetime import date
+        all_nan_df = pd.DataFrame([{"ID": float("nan"), "Task": float("nan"), "Fund": float("nan"), "Hours": float("nan")}])
+        max_df = pd.DataFrame({"max_id": [0]})
+
+        calls = []
+        def side_effect(conn, query, params=None):
+            calls.append((query, params))
+            return max_df if "MAX(ID)" in query else None
+
+        with patch(PATCH, side_effect=side_effect):
+            saveNote(make_conn(), "EMP001", date(2026, 5, 6), all_nan_df)
+
+        assert not any("INSERT" in c[0].upper() for c in calls)
+        assert not any("UPDATE" in c[0].upper() for c in calls)

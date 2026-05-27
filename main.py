@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 import io
-from datetime import datetime
+from datetime import datetime, date
+from streamlit_calendar import calendar as st_calendar
 from Controllers.DB import *
 from login import get_auth_url, exchange_code_for_token, render_report
 from Classes import *
@@ -42,7 +43,7 @@ if st.session_state.user is None:
             st.session_state.user = {
                 "name": claims.get("name"),
                 #Throw in here to spoof as other people
-                "email": claims.get("preferred_username"),
+                "email": "rodriguezf@CRTCT.ORG",
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()
@@ -184,7 +185,7 @@ st.markdown(f"""
         margin-top: 0 !important;
     }}
     div[data-testid="stColumn"] {{
-        padding: 2px 8px !important;
+        padding: 2px 3px !important;
     }}
 
     /* ── Sidebar section label ── */
@@ -278,6 +279,85 @@ sidebar_col, main_col = st.columns([1, 5])
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with sidebar_col:
+
+    if "cal_open" not in st.session_state:
+        st.session_state.cal_open = False
+    if "cal_selected_date" not in st.session_state:
+        st.session_state.cal_selected_date = None
+
+    @st.fragment
+    def calendar_section():
+        if "cal_selected_date" not in st.session_state:
+            st.session_state.cal_selected_date = None
+
+        cal_arrow = "▼" if st.session_state.cal_open else "►"
+        if st.button(f"{cal_arrow} Planning Calendar", use_container_width=True, key="cal_toggle"):
+            st.session_state.cal_open = not st.session_state.cal_open
+
+        if st.session_state.cal_open:
+            emp_code = login[0].employee_code
+            all_notes_df = getAllNotesByEmployee(conn, emp_code)
+            cal_events = []
+            if all_notes_df is not None and not all_notes_df.empty:
+                for d in all_notes_df["Date"].unique():
+                    cal_events.append({
+                        "title": "●",
+                        "start": f"{str(d)[:4]}-{str(d)[4:6]}-{str(d)[6:8]}",
+                        "display": "background",
+                        "backgroundColor": "#3b82f6",
+                    })
+
+            cal_result = st_calendar(
+                events=cal_events,
+                options={
+                    "initialView": "dayGridMonth",
+                    "headerToolbar": {"left": "prev,next", "center": "title", "right": ""},
+                    "height": 300,
+                    "selectable": True,
+                    "dayMaxEvents": True,
+                },
+                callbacks=["dateClick"],
+                key="planning_cal",
+            )
+
+            clicked = (cal_result or {}).get("dateClick", {}).get("date", "")
+            if clicked:
+                try:
+                    st.session_state.cal_selected_date = date.fromisoformat(clicked[:10])
+                except ValueError:
+                    pass
+
+            sel = st.session_state.cal_selected_date
+            if sel:
+                fund_options = getFundsByEmployee(conn, emp_code)
+                task_options = getTasks(conn)
+
+                existing = getNotes(conn, emp_code, sel)
+                notes_df = existing.copy() if existing is not None else pd.DataFrame(columns=["ID", "Task", "Fund", "Hours"])
+
+                edited_notes = st.data_editor(
+                    notes_df[["ID", "Task", "Fund", "Hours"]],
+                    column_order=["Task", "Fund", "Hours"],
+                    column_config={
+                        "ID": None,
+                        "Task": st.column_config.SelectboxColumn("Task", options=task_options),
+                        "Fund": st.column_config.SelectboxColumn("Fund", options=fund_options),
+                        "Hours": st.column_config.NumberColumn("Hours", format="%.2f"),
+                    },
+                    num_rows="dynamic",
+                    key=f"notes_editor_{sel}",
+                )
+
+                if st.button("💾 Save Notes", key="save_notes", use_container_width=True):
+                    original_ids = set(notes_df["ID"].dropna().astype(int))
+                    edited_ids = set(edited_notes["ID"].dropna().astype(int))
+                    for del_id in (original_ids - edited_ids):
+                        deleteNote(conn, int(del_id))
+                    saveNote(conn, emp_code, sel, edited_notes)
+                    st.success("✅ Saved successfully!")
+
+    calendar_section()
+
     with st.expander("Employee Self Service", expanded=True):
         pages = [
         "Timecard Allocations",
