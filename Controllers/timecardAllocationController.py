@@ -448,6 +448,30 @@ def getEmployeesByPayPeriod(conn, pay_period, user):
     ) for _, row in df.iterrows()]
 
 
+def getAllEmployeesByPayPeriod(conn, pay_period):
+    parts = pay_period.split("/")
+    period = f"{parts[2]}{parts[0]}{parts[1]}"
+    df = run_query(conn, """
+        SELECT DISTINCT e.EmployeeCode, e.EmployeeLast, e.EmployeeFirst,
+               e.DepartmentCode, e.WorkEmail, e.PayPeriodHours
+        FROM dbo.vw_EmployeeInformation e
+        INNER JOIN dbo.Time_Card tc ON tc.EmployeeCode = e.EmployeeCode
+        WHERE tc.PayPeriod = ?
+        ORDER BY e.EmployeeLast, e.EmployeeFirst
+    """, [period])
+    if df is None or df.empty:
+        return []
+    return [Employee(
+        row["EmployeeCode"],
+        row["EmployeeLast"],
+        row["EmployeeFirst"],
+        row["DepartmentCode"],
+        row["WorkEmail"],
+        None,
+        row["PayPeriodHours"]
+    ) for _, row in df.iterrows()]
+
+
 def getRecords(conn, schedule_id):
     """
     Retrieves all allocation records associated with a given Schedule entry.

@@ -43,7 +43,7 @@ if st.session_state.user is None:
             st.session_state.user = {
                 "name": claims.get("name"),
                 #Throw in here to spoof as other people
-                "email": "rodriguezf@CRTCT.ORG",
+                "email": claims.get("preferred_username"),
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()
@@ -354,7 +354,6 @@ with sidebar_col:
                     for del_id in (original_ids - edited_ids):
                         deleteNote(conn, int(del_id))
                     saveNote(conn, emp_code, sel, edited_notes)
-                    st.success("✅ Saved successfully!")
 
     calendar_section()
 
@@ -466,7 +465,7 @@ with sidebar_col:
 with main_col:
     match st.session_state.active_page:
         case "Timecard Allocations":
-            timecard_allocations.render(conn, user, login)
+            timecard_allocations.render(conn, user, login, isAdmin=isAdmin)
         case "Approval Report Manager":
             approval_report_manager.render(conn, user, login)
         # case "Time Card Report":

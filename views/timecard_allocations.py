@@ -5,11 +5,11 @@ from Classes import *
 from Jobs.notify_manager_on_acknowledge import notify_manager
 
 
-def render(conn, user, login):
+def render(conn, user, login, isAdmin=False):
     st.title("Timecard Allocations")
-    isManager = login[0].isManager()
+    isManager = isAdmin or login[0].isManager()
     ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([2, 3, 2, 2])
-    
+
     employee_name = None  # ← initialize before columns
 
     with ctrl1:
@@ -21,7 +21,10 @@ def render(conn, user, login):
 
     with ctrl2:
         try:
-            employees = getEmployeesByPayPeriod(conn, pay_period, user)
+            if isAdmin:
+                employees = getAllEmployeesByPayPeriod(conn, pay_period)
+            else:
+                employees = getEmployeesByPayPeriod(conn, pay_period, user)
         except Exception:
             st.error("Cannot pull timecards.")
             return
