@@ -43,7 +43,7 @@ if st.session_state.user is None:
             st.session_state.user = {
                 "name": claims.get("name"),
                 #Throw in here to spoof as other people
-                "email": claims.get("preferred_username"),
+                "email": "rodriguezf@CRTCT.ORG",
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()
@@ -354,6 +354,7 @@ with sidebar_col:
                     for del_id in (original_ids - edited_ids):
                         deleteNote(conn, int(del_id))
                     saveNote(conn, emp_code, sel, edited_notes)
+                    st.success("✅ Saved successfully!")
 
     calendar_section()
 
