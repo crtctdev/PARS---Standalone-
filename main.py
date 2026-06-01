@@ -315,10 +315,17 @@ with sidebar_col:
                 options={
                     "initialView": "dayGridMonth",
                     "headerToolbar": {"left": "prev,next", "center": "title", "right": ""},
-                    "height": 300,
+                    "contentHeight": "auto",
                     "selectable": True,
                     "dayMaxEvents": True,
                 },
+                custom_css="""
+                    .fc { font-size: clamp(9px, 4.5vw, 13px); }
+                    .fc-toolbar-title { font-size: 1.1em !important; }
+                    .fc-button { padding: 0.15em 0.4em !important; font-size: 0.85em !important; }
+                    .fc-daygrid-day-number { font-size: 0.85em; }
+                    .fc-col-header-cell { font-size: 0.8em; }
+                """,
                 callbacks=["dateClick"],
                 key="planning_cal",
             )
