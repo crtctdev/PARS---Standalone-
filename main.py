@@ -52,7 +52,11 @@ if st.session_state.user is None:
             st.query_params.clear()
             st.rerun()
         else:
-            st.error(result.get("error_description", "Login failed"))
+            err = result.get("error_description", "")
+            if "AADSTS54005" in err:
+                st.warning("Your login link has already been used. Please refresh the page and try again.")
+            else:
+                st.error(err or "Login failed.")
             st.stop()
     else:
         login_url = get_auth_url()
