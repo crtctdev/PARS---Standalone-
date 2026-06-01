@@ -223,23 +223,6 @@ st.markdown(f"""
         padding: 6px 10px !important;
         background: white !important;
     }}
-    .logout-btn {{
-        background: #1e293b;
-        border: 1px solid #475569;
-        border-radius: 6px;
-        color: #cbd5e1 !important;
-        font-size: 15px;
-        font-weight: bold;
-        padding: 5px 12px;
-        text-decoration: none !important;
-        cursor: pointer;
-        transition: all 0.15s ease;
-    }}
-    .logout-btn:hover {{
-        background: #dc2626;
-        border-color: #dc2626;
-        color: white !important;
-    }}
 </style>
 
 <!-- Always-visible fixed header -->
@@ -253,7 +236,6 @@ st.markdown(f"""
             <div class="user-avatar">{initials}</div>
             {user['name']}
         </div>
-        <a href="?logout=true" class="logout-btn">Logout</a>
     </div>
 </div>
 """, unsafe_allow_html=True)
