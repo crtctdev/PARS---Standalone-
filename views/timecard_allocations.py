@@ -12,12 +12,14 @@ def render(conn, user, login, isAdmin=False):
 
     employee_name = None  # ← initialize before columns
 
+    pay_periods = getPayPeriods(conn)
+
+    # Initialise pay period state (key= makes Streamlit own the value after first render)
+    if "tc_pay_period" not in st.session_state or st.session_state.tc_pay_period not in pay_periods:
+        st.session_state.tc_pay_period = pay_periods[0] if pay_periods else None
+
     with ctrl1:
-        pay_period = st.selectbox(
-            "Pay Period",
-            options=getPayPeriods(conn),
-            index=0,
-        )
+        pay_period = st.selectbox("Pay Period", options=pay_periods, key="tc_pay_period")
 
     with ctrl2:
         try:
@@ -28,11 +30,23 @@ def render(conn, user, login, isAdmin=False):
         except Exception:
             st.error("Cannot pull timecards.")
             return
+
+        # When pay period changes, clear the employee widget state so index= re-applies
+        if st.session_state.get("tc_last_pay_period") != pay_period:
+            st.session_state.tc_last_pay_period = pay_period
+            st.session_state.pop("tc_employee_select", None)
+
+        saved_code = st.session_state.get("tc_employee_code")
+        emp_index = next((i for i, e in enumerate(employees) if e.employee_code == saved_code), 0)
+
         employee_name = st.selectbox(
             "Employee Name",
             options=employees,
+            index=emp_index,
+            key="tc_employee_select",
             format_func=lambda e: e.full_name(),
         )
+        st.session_state.tc_employee_code = employee_name.employee_code
     approved, acknowledged = checkState(employee_name.employee_code, pay_period, conn)
 
     state_key = f"{employee_name.employee_code}_{pay_period}"
