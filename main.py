@@ -4,7 +4,7 @@ import io
 from datetime import datetime, date
 from streamlit_calendar import calendar as st_calendar
 from Controllers.DB import *
-from login import get_auth_url, exchange_code_for_token, render_report
+from login import get_auth_url, exchange_code_for_token, render_report, check_pars_group_membership
 from Classes import *
 from views import timecard_allocations, approval_report_manager, time_card_report
 from Controllers.timecardAllocationController import *
@@ -40,10 +40,13 @@ if st.session_state.user is None:
         result = exchange_code_for_token(code)
         if "id_token_claims" in result:
             claims = result["id_token_claims"]
+            if not check_pars_group_membership(claims.get("oid")):
+                st.error("Access denied. You must be a member of the PARS security group to use this application.")
+                st.stop()
             st.session_state.user = {
                 "name": claims.get("name"),
                 #Throw in here to spoof as other people
-                "email": claims.get("preferred_username"),
+                "email": "rakhudum@crtct.org",
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()

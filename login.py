@@ -1,5 +1,6 @@
 import os
 import msal
+import requests
 import streamlit as st
 import socket
 
@@ -45,6 +46,43 @@ def exchange_code_for_token(code):
         scopes=SCOPES,
         redirect_uri=REDIRECT_URI,
     )
+
+def check_pars_group_membership(user_oid):
+    token_resp = requests.post(
+        f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "scope": "https://graph.microsoft.com/.default",
+        },
+    )
+    if token_resp.status_code != 200:
+        return False
+    headers = {"Authorization": f"Bearer {token_resp.json().get('access_token')}"}
+
+    group_resp = requests.get(
+        "https://graph.microsoft.com/v1.0/groups?$filter=displayName eq 'PARS - Security'&$select=id",
+        headers=headers,
+    )
+    if group_resp.status_code != 200:
+        return False
+    groups_found = group_resp.json().get("value", [])
+    if not groups_found:
+        return False
+    group_id = groups_found[0]["id"]
+
+    members_url = f"https://graph.microsoft.com/v1.0/groups/{group_id}/members?$select=id"
+    while members_url:
+        resp = requests.get(members_url, headers=headers)
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+        if any(m["id"] == user_oid for m in data.get("value", [])):
+            return True
+        members_url = data.get("@odata.nextLink")
+    return False
+
 
 def render_report(filter_string=""):
     embed_url = "https://app.powerbi.com/reportEmbed?reportId=c03466a4-103f-42aa-9225-597cd5ce1a25&autoAuth=true&ctid=31c347a9-3e62-4167-b697-eacfb065e074"
