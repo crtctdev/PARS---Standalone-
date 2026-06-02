@@ -89,14 +89,13 @@ def render(conn, user, login, isAdmin=False):
     else:
         with st.container(border=True):
 
-            col1, col2, col3, col4, col5, col6, col7 = st.columns([0.5, 2, 2, 1.5, 1.5, 1.5, 1.2])
+            col1, col2, col3, col4, col5, col6 = st.columns([0.5, 2, 2, 1.5, 1.5, 1.2])
             col1.markdown("&nbsp;")
             col2.markdown("**Date**")
             col3.markdown("**Pay Type**")
             col4.markdown("**Total Hours**")
-            col5.markdown("**Percentage**")
-            col6.markdown("<div style='text-align:center'><b>Allocations Made</b></div>", unsafe_allow_html=True)
-            col7.markdown("<div style='text-align:center'><b>Fund Code Breakdown</b></div>", unsafe_allow_html=True)
+            col5.markdown("<div style='text-align:center'><b>Allocations Made</b></div>", unsafe_allow_html=True)
+            col6.markdown("<div style='text-align:center'><b>Fund Code Breakdown</b></div>", unsafe_allow_html=True)
 
             st.markdown("""
             <style>
@@ -143,7 +142,7 @@ def render(conn, user, login, isAdmin=False):
                         <span class="tooltiptext">{"<br>".join(lines)}</span>
                     </span></div>'''
 
-                col1, col2, col3, col4, col5, col6, col7 = st.columns([0.5, 2, 2, 1.5, 1.5, 1.5, 1.2])
+                col1, col2, col3, col4, col5, col6 = st.columns([0.5, 2, 2, 1.5, 1.5, 1.2])
                 with col1:
                     arrow = "▼" if st.session_state[key] else "►"
                     if st.button(arrow, key=f"btn_{schedule_id}"):
@@ -152,10 +151,9 @@ def render(conn, user, login, isAdmin=False):
                 col2.write(row["Date"])
                 col3.write(row["PayType"])
                 col4.write(row["TotalHours"])
-                col5.write(f"{row['Percentage']}%")
                 check_html = f'<div style="text-align:center; padding-top:4px;"><input type="checkbox" {"checked" if has_records else ""} disabled style="width:16px; height:16px; accent-color:#3b82f6; cursor:default;"></div>'
-                col6.markdown(check_html, unsafe_allow_html=True)
-                col7.markdown(breakdown_html, unsafe_allow_html=True)
+                col5.markdown(check_html, unsafe_allow_html=True)
+                col6.markdown(breakdown_html, unsafe_allow_html=True)
                 st.markdown("---")
                 if st.session_state[key]:
                     with st.container():
