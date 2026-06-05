@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import io
 from datetime import datetime, date
@@ -472,3 +473,68 @@ with main_col:
         #         render_report(f"Invoked_x0020_function/EmployeeCode eq '{employee_code}'")
         #     else:
         #         render_report(f"Invoked_x0020_function/DepartmentCode eq '{managing_dept}' or Invoked_x0020_function/DepartmentCode eq '{dept_code}'")
+
+# ── Sidebar resize handle ─────────────────────────────────────────────────────
+components.html("""
+<script>
+(function() {
+    function init() {
+        var doc = window.parent.document;
+        var sidebar = doc.querySelector(
+            'div[data-testid="stHorizontalBlock"]:first-of-type > div[data-testid="stColumn"]:first-child'
+        );
+        var main = doc.querySelector(
+            'div[data-testid="stHorizontalBlock"]:first-of-type > div[data-testid="stColumn"]:last-child'
+        );
+        if (!sidebar || !main) { setTimeout(init, 300); return; }
+        if (doc.getElementById('sb-resize-handle')) return;
+
+        var style = doc.createElement('style');
+        style.textContent = [
+            'div[data-testid="stHorizontalBlock"]:first-of-type > div[data-testid="stColumn"]:first-child { position: relative !important; }',
+            '#sb-resize-handle { position:absolute; top:0; right:-3px; bottom:0; width:6px; cursor:col-resize; z-index:9998; background:transparent; }',
+            '#sb-resize-handle:hover, #sb-resize-handle.dragging { background:rgba(59,130,246,0.4); border-radius:3px; }'
+        ].join('');
+        doc.head.appendChild(style);
+
+        var handle = doc.createElement('div');
+        handle.id = 'sb-resize-handle';
+        sidebar.appendChild(handle);
+
+        var startX, startW;
+        handle.addEventListener('mousedown', function(e) {
+            startX = e.clientX;
+            startW = sidebar.getBoundingClientRect().width;
+            handle.classList.add('dragging');
+            doc.body.style.cursor = 'col-resize';
+            doc.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+        doc.addEventListener('mousemove', function(e) {
+            if (!handle.classList.contains('dragging')) return;
+            var w = Math.min(Math.max(startW + (e.clientX - startX), 160), 700);
+            sidebar.style.minWidth = w + 'px';
+            sidebar.style.maxWidth = w + 'px';
+            sidebar.style.flex = '0 0 ' + w + 'px';
+            if (main) {
+                main.style.flex = '1 1 auto';
+                main.style.minWidth = '0';
+                main.style.maxWidth = 'none';
+            }
+        });
+        doc.addEventListener('mouseup', function() {
+            if (!handle.classList.contains('dragging')) return;
+            handle.classList.remove('dragging');
+            doc.body.style.cursor = '';
+            doc.body.style.userSelect = '';
+        });
+
+        // Re-attach handle if Streamlit removes it on rerun
+        new MutationObserver(function() {
+            if (!doc.getElementById('sb-resize-handle')) sidebar.appendChild(handle);
+        }).observe(sidebar, { childList: true });
+    }
+    init();
+})();
+</script>
+""", height=0)
