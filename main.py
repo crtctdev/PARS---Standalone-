@@ -38,6 +38,11 @@ code = st.query_params.get("code")
 # ── Login Flow ────────────────────────────────────────────────────────────────
 if st.session_state.user is None:
     if code:
+        # Guard against Streamlit re-runs replaying the same auth code (AADSTS54005)
+        if st.session_state.get("_last_exchanged_code") == code:
+            st.info("Signing you in, please wait...")
+            st.stop()
+        st.session_state._last_exchanged_code = code
         result = exchange_code_for_token(code)
         if "id_token_claims" in result:
             claims = result["id_token_claims"]
@@ -47,7 +52,7 @@ if st.session_state.user is None:
             st.session_state.user = {
                 "name": claims.get("name"),
                 #Throw in here to spoof as other people
-                "email": "rakhudum@crtct.org",
+                "email": claims.get("preferred_username"),
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()
@@ -55,9 +60,9 @@ if st.session_state.user is None:
         else:
             err = result.get("error_description", "")
             if "AADSTS54005" in err:
-                st.warning("Your login link has already been used. Please refresh the page and try again.")
+                st.warning("Your session expired during sign-in. Please refresh the page to try again.")
             else:
-                st.error(err or "Login failed.")
+                st.error("Sign-in failed. Please refresh the page and try again.")
             st.stop()
     else:
         login_url = get_auth_url()
