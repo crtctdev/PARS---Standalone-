@@ -51,8 +51,8 @@ if st.session_state.user is None:
                 st.stop()
             st.session_state.user = {
                 "name": claims.get("name"),
-                #Throw in here to spoof as other people
-                "email": claims.get("preferred_username"),
+                #Throw in here to spoof as other people claims.get("preferred_username")
+                "email":"McCluskeyC@crtct.org" ,
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()
@@ -331,7 +331,7 @@ with sidebar_col:
 
             sel = st.session_state.cal_selected_date
             if sel:
-                fund_options = getFundsByEmployee(conn, emp_code)
+                fund_options = getFundsByEmployee(conn, login[0].work_email)
                 task_options = getTasks(conn)
 
                 existing = getNotes(conn, emp_code, sel)

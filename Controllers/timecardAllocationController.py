@@ -39,24 +39,17 @@ def autoAllocateNonRegularRecords(conn, non_regular_entries, work_email_map):
 
     placeholders = ','.join(['?' for _ in work_emails])
     fund_alloc_df = run_query(conn, f"""
-        SELECT LOWER(WorkEmail) AS WorkEmail, FundCode, Percentage
+        SELECT LOWER(WorkEmail) AS WorkEmail, FundCode, FundCodeDescription, Percentage
         FROM CRT_INFO.dbo.ADUsers
         WHERE LOWER(WorkEmail) IN ({placeholders})
     """, [e.lower() for e in work_emails])
     if fund_alloc_df is None or fund_alloc_df.empty:
         return
 
-    fund_codes = fund_alloc_df["FundCode"].unique().tolist()
-    placeholders2 = ','.join(['?' for _ in fund_codes])
-    fund_desc_df = run_query(conn, f"SELECT FundCode, FundDescription FROM dbo.Funds WHERE FundCode IN ({placeholders2})", fund_codes)
-    fund_desc_map = {}
-    if fund_desc_df is not None and not fund_desc_df.empty:
-        fund_desc_map = {r["FundCode"]: r["FundDescription"] for _, r in fund_desc_df.iterrows()}
-
     from collections import defaultdict
     email_fund_map = defaultdict(list)
     for _, r in fund_alloc_df.iterrows():
-        desc = fund_desc_map.get(r["FundCode"], r["FundCode"])
+        desc = r["FundCodeDescription"] if r["FundCodeDescription"] else ""
         email_fund_map[r["WorkEmail"]].append({"fund_option": f"{r['FundCode']}:{desc}", "percentage": float(r["Percentage"])})
 
     email_by_code = {ec: work_email_map[ec].lower() for ec in employee_codes if ec in work_email_map}
@@ -522,28 +515,15 @@ def getFundAllocations(conn, work_email):
     return df.to_dict("records")
 
 
-def getFundsByEmployee(conn, employee_code):
-    """
-    Retrieves the funds associated with a specific employee.
-
-    Joins EmployeeFundMatch against the Funds table to resolve descriptions and
-    returns each fund as a 'FundCode:FundDescription' string for use in the Fund
-    selectbox column in the allocation data editor.
-
-    Args:
-        conn (pyodbc.Connection): An active database connection.
-        employee_code (str): The employee's unique identifier.
-
-    Returns:
-        list[str]: Fund options in 'FundCode:FundDescription' format.
-    """
+def getFundsByEmployee(conn, work_email):
     df = run_query(conn, """
-        SELECT DISTINCT F.FundCode, F.FundDescription
-        FROM Funds AS F
-        LEFT JOIN dbo.vw_EmployeeFundCodes AS E ON F.FundCode = E.FundCode
-        WHERE E.EmployeeCode = ?
-    """, [employee_code])
-    return (df["FundCode"] + ":" + df["FundDescription"]).tolist()
+        SELECT FundCode, FundCodeDescription
+        FROM CRT_INFO.dbo.ADUsers
+        WHERE LOWER(WorkEmail) = LOWER(?)
+    """, [work_email])
+    if df is None or df.empty:
+        return []
+    return (df["FundCode"] + ":" + df["FundCodeDescription"].fillna("")).tolist()
 
 
 def saveAllocations(conn, schedule_id, edited_df):

@@ -82,7 +82,7 @@ def render(conn, user, login, isAdmin=False):
     # Time Card Table
     if employee_name is not None:
         timecard_df = getSchedule(conn, employee_name.employee_code, pay_period)
-        fund_options = getFundsByEmployee(conn, employee_name.employee_code)
+        fund_options = getFundsByEmployee(conn, employee_name.work_email)
         fund_allocations = getFundAllocations(conn, employee_name.work_email)
     if timecard_df.empty:
         st.caption("No records to display.")
@@ -163,6 +163,10 @@ def render(conn, user, login, isAdmin=False):
                             allocations_df = pd.DataFrame(columns=["ID", "Task", "Fund", "Hours"])
                         else:
                             allocations_df = allocations_df.copy()
+                            fund_option_map = {f.split(":")[0]: f for f in fund_options}
+                            allocations_df["Fund"] = allocations_df["Fund"].apply(
+                                lambda f: fund_option_map.get(str(f).split(":")[0], f) if pd.notna(f) else f
+                            )
 
                         editor_df = allocations_df[["ID", "Task", "Fund", "Hours"]].copy()
 

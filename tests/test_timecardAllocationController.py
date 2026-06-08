@@ -133,20 +133,36 @@ class TestGetTasks:
 
 class TestGetFundsByEmployee:
     def test_concatenates_code_and_description(self):
-        """Funds should be returned as 'FundCode:FundDescription' strings for use in the UI selectbox."""
+        """Funds should be returned as 'FundCode:FundCodeDescription' strings for use in the UI selectbox."""
         from Controllers.timecardAllocationController import getFundsByEmployee
-        df = pd.DataFrame({"FundCode": ["F01"], "FundDescription": ["General Fund"]})
+        df = pd.DataFrame({"FundCode": ["F01"], "FundCodeDescription": ["General Fund"]})
         with patch(PATCH, return_value=df):
-            result = getFundsByEmployee(make_conn(), "EMP001")
+            result = getFundsByEmployee(make_conn(), "user@test.com")
         assert result == ["F01:General Fund"]
 
-    def test_passes_employee_code_as_param(self):
-        """The employee code must be forwarded as a query parameter so results are filtered to that employee."""
+    def test_passes_work_email_as_param(self):
+        """The work email must be forwarded as a query parameter so results are filtered to that employee."""
         from Controllers.timecardAllocationController import getFundsByEmployee
-        df = pd.DataFrame({"FundCode": pd.Series([], dtype=str), "FundDescription": pd.Series([], dtype=str)})
+        df = pd.DataFrame({"FundCode": pd.Series([], dtype=str), "FundCodeDescription": pd.Series([], dtype=str)})
         with patch(PATCH, return_value=df) as mock_rq:
-            getFundsByEmployee(make_conn(), "EMP999")
-        assert "EMP999" in mock_rq.call_args[0][2]
+            getFundsByEmployee(make_conn(), "user@test.com")
+        assert "user@test.com" in mock_rq.call_args[0][2]
+
+    def test_returns_empty_list_when_no_results(self):
+        """When ADUsers has no rows for the email, getFundsByEmployee should return [] rather than raising."""
+        from Controllers.timecardAllocationController import getFundsByEmployee
+        with patch(PATCH, return_value=None):
+            result = getFundsByEmployee(make_conn(), "unknown@test.com")
+        assert result == []
+
+    def test_null_description_becomes_empty_string(self):
+        """A NULL FundCodeDescription in ADUsers must not produce NaN in the option string — it should be empty."""
+        from Controllers.timecardAllocationController import getFundsByEmployee
+        df = pd.DataFrame({"FundCode": ["609LNK-26"], "FundCodeDescription": [None]})
+        with patch(PATCH, return_value=df):
+            result = getFundsByEmployee(make_conn(), "user@test.com")
+        assert result == ["609LNK-26:"]
+        assert "nan" not in result[0].lower()
 
 
 # ── deleteRecord ──────────────────────────────────────────────────────────────
@@ -412,17 +428,14 @@ class TestAutoAllocateNonRegularRecords:
     def _email_map(self, code="EMP001", email="emp001@test.com"):
         return {code: email}
 
-    def _side(self, has_task=True, fund_allocs=None, fund_descs=None, max_id=0):
+    def _side(self, has_task=True, fund_allocs=None, max_id=0):
         def side_effect(conn, query, params=None):
             if "Activities" in query:
                 if not has_task:
                     return empty_df()
                 return pd.DataFrame({"Code": ["O"], "Description": ["Other Hours"]})
             if "ADUsers" in query:
-                rows = fund_allocs if fund_allocs is not None else [{"WorkEmail": "emp001@test.com", "FundCode": "F01", "Percentage": 100.0}]
-                return pd.DataFrame(rows) if rows else empty_df()
-            if "Funds" in query:
-                rows = fund_descs if fund_descs is not None else [{"FundCode": "F01", "FundDescription": "General Fund"}]
+                rows = fund_allocs if fund_allocs is not None else [{"WorkEmail": "emp001@test.com", "FundCode": "F01", "FundCodeDescription": "General Fund", "Percentage": 100.0}]
                 return pd.DataFrame(rows) if rows else empty_df()
             if "MAX(ID)" in query:
                 return pd.DataFrame({"max_id": [max_id]})
@@ -473,14 +486,10 @@ class TestAutoAllocateNonRegularRecords:
         from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
         conn = make_conn()
         fund_allocs = [
-            {"WorkEmail": "emp001@test.com", "FundCode": "F01", "Percentage": 60.0},
-            {"WorkEmail": "emp001@test.com", "FundCode": "F02", "Percentage": 40.0},
+            {"WorkEmail": "emp001@test.com", "FundCode": "F01", "FundCodeDescription": "General Fund", "Percentage": 60.0},
+            {"WorkEmail": "emp001@test.com", "FundCode": "F02", "FundCodeDescription": "Special Fund", "Percentage": 40.0},
         ]
-        fund_descs = [
-            {"FundCode": "F01", "FundDescription": "General Fund"},
-            {"FundCode": "F02", "FundDescription": "Special Fund"},
-        ]
-        with patch(PATCH, side_effect=self._side(fund_allocs=fund_allocs, fund_descs=fund_descs)):
+        with patch(PATCH, side_effect=self._side(fund_allocs=fund_allocs)):
             autoAllocateNonRegularRecords(conn, self._entries(), self._email_map())
         assert len(self._record_rows(conn)) == 2
 
@@ -497,14 +506,10 @@ class TestAutoAllocateNonRegularRecords:
         from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
         conn = make_conn()
         fund_allocs = [
-            {"WorkEmail": "emp001@test.com", "FundCode": "F01", "Percentage": 60.0},
-            {"WorkEmail": "emp001@test.com", "FundCode": "F02", "Percentage": 40.0},
+            {"WorkEmail": "emp001@test.com", "FundCode": "F01", "FundCodeDescription": "General Fund", "Percentage": 60.0},
+            {"WorkEmail": "emp001@test.com", "FundCode": "F02", "FundCodeDescription": "Special Fund", "Percentage": 40.0},
         ]
-        fund_descs = [
-            {"FundCode": "F01", "FundDescription": "General Fund"},
-            {"FundCode": "F02", "FundDescription": "Special Fund"},
-        ]
-        with patch(PATCH, side_effect=self._side(fund_allocs=fund_allocs, fund_descs=fund_descs)):
+        with patch(PATCH, side_effect=self._side(fund_allocs=fund_allocs)):
             autoAllocateNonRegularRecords(conn, self._entries(total_hours=10.0), self._email_map())
         hours = sorted(r[2] for r in self._record_rows(conn))
         assert hours == [4.0, 6.0]
@@ -518,26 +523,33 @@ class TestAutoAllocateNonRegularRecords:
         assert self._record_rows(conn)[0][0] == "O:Other Hours"
 
     def test_fund_format_is_code_colon_description(self):
-        """Fund stored in each Record must be 'FundCode:FundDescription' — matching the UI selectbox format."""
+        """Fund stored in each Record must be 'FundCode:FundCodeDescription' from ADUsers — matching the UI selectbox format."""
         from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
         conn = make_conn()
         with patch(PATCH, side_effect=self._side()):
             autoAllocateNonRegularRecords(conn, self._entries(), self._email_map())
         assert self._record_rows(conn)[0][1] == "F01:General Fund"
 
+    def test_null_fund_description_stored_as_code_colon_empty(self):
+        """When FundCodeDescription is NULL in ADUsers, the stored Fund must be 'FundCode:' not 'FundCode:nan'."""
+        from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
+        conn = make_conn()
+        fund_allocs = [{"WorkEmail": "emp001@test.com", "FundCode": "609LNK-26", "FundCodeDescription": None, "Percentage": 100.0}]
+        with patch(PATCH, side_effect=self._side(fund_allocs=fund_allocs)):
+            autoAllocateNonRegularRecords(conn, self._entries(), self._email_map())
+        stored_fund = self._record_rows(conn)[0][1]
+        assert stored_fund == "609LNK-26:"
+        assert "nan" not in stored_fund.lower()
+
     def test_record_ids_are_sequential_from_max(self):
         """Record IDs must start at max_id + 1 and increment by 1 for each row."""
         from Controllers.timecardAllocationController import autoAllocateNonRegularRecords
         conn = make_conn()
         fund_allocs = [
-            {"WorkEmail": "emp001@test.com", "FundCode": "F01", "Percentage": 60.0},
-            {"WorkEmail": "emp001@test.com", "FundCode": "F02", "Percentage": 40.0},
+            {"WorkEmail": "emp001@test.com", "FundCode": "F01", "FundCodeDescription": "General Fund", "Percentage": 60.0},
+            {"WorkEmail": "emp001@test.com", "FundCode": "F02", "FundCodeDescription": "Special Fund", "Percentage": 40.0},
         ]
-        fund_descs = [
-            {"FundCode": "F01", "FundDescription": "General Fund"},
-            {"FundCode": "F02", "FundDescription": "Special Fund"},
-        ]
-        with patch(PATCH, side_effect=self._side(fund_allocs=fund_allocs, fund_descs=fund_descs, max_id=5)):
+        with patch(PATCH, side_effect=self._side(fund_allocs=fund_allocs, max_id=5)):
             autoAllocateNonRegularRecords(conn, self._entries(), self._email_map())
         ids = [r[3] for r in self._record_rows(conn)]
         assert ids == [6, 7]
