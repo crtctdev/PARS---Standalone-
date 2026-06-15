@@ -52,7 +52,7 @@ if st.session_state.user is None:
             st.session_state.user = {
                 "name": claims.get("name"),
                 #Throw in here to spoof as other people claims.get("preferred_username")
-                "email":"McCluskeyC@crtct.org" ,
+                "email":claims.get("preferred_username") ,
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()
@@ -363,10 +363,9 @@ with sidebar_col:
         pages = [
         "Timecard Allocations",
         "Approval Report Manager",
-        #"Time Card Report"
+        "Personnel Activity Report",
         ] if isManager else [
             "Timecard Allocations",
-            #"Time Card Report"
         ]
         for page in pages:
             is_active = st.session_state.active_page == page
@@ -470,14 +469,15 @@ with main_col:
             timecard_allocations.render(conn, user, login, isAdmin=isAdmin)
         case "Approval Report Manager":
             approval_report_manager.render(conn, user, login)
-        # case "Time Card Report":
-        #     employee_code = login[0].employee_code
-        #     managing_dept = login[0].managing_department
-        #     dept_code = login[0].dept_code
-        #     if not isManager:
-        #         render_report(f"Invoked_x0020_function/EmployeeCode eq '{employee_code}'")
-        #     else:
-        #         render_report(f"Invoked_x0020_function/DepartmentCode eq '{managing_dept}' or Invoked_x0020_function/DepartmentCode eq '{dept_code}'")
+        
+        case "Personnel Activity Report":
+            if not isManager:
+                st.error("Access denied.")
+                st.stop()
+            managing_dept = login[0].managing_department
+            dept_code = login[0].dept_code
+            render_report(f"Invoked_x0020_function/DepartmentCode eq '{managing_dept}'")
+        
 
 # ── Sidebar resize handle ─────────────────────────────────────────────────────
 components.html("""
