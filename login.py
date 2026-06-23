@@ -85,15 +85,47 @@ def check_pars_group_membership(user_oid):
 
 
 def render_report(filter_string=""):
+    import streamlit.components.v1 as components
+
     embed_url = "https://app.powerbi.com/reportEmbed?reportId=c03466a4-103f-42aa-9225-597cd5ce1a25&autoAuth=true&ctid=31c347a9-3e62-4167-b697-eacfb065e074"
     if filter_string:
         embed_url += f"&filter={filter_string}"
 
     st.markdown(f"""
-        <div style="width:100%; height:85vh; overflow:hidden;">
-            <iframe title="CRT - Personal Activity Report" 
+        <style>
+            @media print {{
+                body * {{ visibility: hidden !important; }}
+                #pbi-report-wrap, #pbi-report-wrap * {{ visibility: visible !important; }}
+                #pbi-report-wrap {{
+                    position: fixed !important;
+                    top: 0; left: 0;
+                    width: 100% !important; height: 100% !important;
+                }}
+                #pbi-print-btn {{ display: none !important; }}
+            }}
+        </style>
+        <div id="pbi-report-wrap" style="width:100%; height:85vh; overflow:hidden;">
+            <iframe title="CRT - Personal Activity Report"
             style="width:100%; height:100%; border:none;"
-            src="{embed_url}" 
+            src="{embed_url}"
             allowFullScreen="true"></iframe>
         </div>
     """, unsafe_allow_html=True)
+
+    components.html("""
+    <script>
+    (function() {
+        var doc = window.parent.document;
+        if (doc.getElementById('pbi-print-btn')) return;
+        var btn = doc.createElement('button');
+        btn.id = 'pbi-print-btn';
+        btn.textContent = '\\uD83D\\uDDA8 Print report';
+        btn.style.cssText = 'position:fixed; top:64px; right:28px; z-index:9999;' +
+            'padding:6px 14px; cursor:pointer; border:1px solid #2d3f55;' +
+            'border-radius:6px; background:#3b82f6; color:#fff;' +
+            'font-size:13px; font-weight:500;';
+        btn.onclick = function() { window.parent.print(); };
+        doc.body.appendChild(btn);
+    })();
+    </script>
+    """, height=0)
