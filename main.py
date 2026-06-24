@@ -255,6 +255,10 @@ st.divider()
 login = setLoggedInUser(conn, user)
 
 if not login:
+    conn = get_connection()
+    login = setLoggedInUser(conn, user)
+
+if not login:
     st.error(f"Your account ({user['email']}) is not set up in the system. Please contact your administrator.")
     st.stop()
 

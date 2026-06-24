@@ -4,16 +4,6 @@ from Classes.Employee import *
 
 
 def get_connection():
-    """
-    Returns a cached pyodbc connection to the PARS database on CRT-SQL
-    using Windows Integrated Authentication.
-
-    The connection is cached for the lifetime of the Streamlit session so that
-    repeated reruns do not open a new connection each time.
-
-    Returns:
-        pyodbc.Connection: An open connection to the PARS database.
-    """
     import streamlit as st
 
     @st.cache_resource
@@ -22,7 +12,13 @@ def get_connection():
             'DRIVER={ODBC Driver 17 for SQL Server};SERVER=CRT-SQL;DATABASE=PARS;Trusted_Connection=yes;'
         )
 
-    return _connect()
+    conn = _connect()
+    try:
+        conn.cursor().execute("SELECT 1")
+    except Exception:
+        st.cache_resource.clear()
+        conn = _connect()
+    return conn
 
 
 def load_table(table_name):
