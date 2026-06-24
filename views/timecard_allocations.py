@@ -121,7 +121,7 @@ def render(conn, user, login, isAdmin=False):
 
             schedule_ids = timecard_df["ScheduleID"].tolist()
             placeholders = ','.join(['?' for _ in schedule_ids])
-            allocated_df = run_query(conn, f"SELECT DISTINCT ScheduleID FROM dbo.Record WHERE ScheduleID IN ({placeholders})", schedule_ids)
+            allocated_df = run_query(conn, f"SELECT DISTINCT ScheduleID FROM dbo.Record WHERE ScheduleID IN ({placeholders}) AND Task IS NOT NULL AND Fund IS NOT NULL", schedule_ids)
             allocated_ids = set(allocated_df["ScheduleID"].tolist()) if allocated_df is not None and not allocated_df.empty else set()
 
             for _, row in timecard_df.iterrows():
