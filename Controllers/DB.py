@@ -4,21 +4,19 @@ from Classes.Employee import *
 
 
 def get_connection():
-    import streamlit as st
+    """
+    Returns a fresh connection to the PARS database on every call.
 
-    @st.cache_resource
-    def _connect():
-        return pyodbc.connect(
-            'DRIVER={ODBC Driver 17 for SQL Server};SERVER=CRT-SQL;DATABASE=PARS;Trusted_Connection=yes;'
-        )
+    Not cached — SQL Server drops idle connections silently, and a stale cached connection
+    caused mid-session crashes. The ODBC driver pools connections internally so this is
+    still fast, and Streamlit's single-threaded session model means there is no race risk.
 
-    conn = _connect()
-    try:
-        conn.cursor().execute("SELECT 1")
-    except Exception:
-        st.cache_resource.clear()
-        conn = _connect()
-    return conn
+    Returns:
+        pyodbc.Connection: An open connection to the PARS database.
+    """
+    return pyodbc.connect(
+        'DRIVER={ODBC Driver 17 for SQL Server};SERVER=CRT-SQL;DATABASE=PARS;Trusted_Connection=yes;'
+    )
 
 
 def load_table(table_name):
