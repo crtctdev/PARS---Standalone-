@@ -208,10 +208,9 @@ def render(conn, user, login, isAdmin=False):
                             if not hours_match:
                                 st.error("Allocated Hours Must Equate To Total Hours")
 
-                            if hours_match and st.button(
-                                "💾 Save Allocations",
-                                key=f"save_{schedule_id}",
-                            ):
+                            btn_col1, btn_col2 = st.columns([1, 1])
+
+                            if hours_match and btn_col1.button("💾 Save Allocations", key=f"save_{schedule_id}"):
                                 original_ids = set(allocations_df["ID"].dropna().astype(int))
                                 edited_ids = set(edited_df["ID"].dropna().astype(int))
                                 deleted_ids = original_ids - edited_ids
@@ -223,5 +222,12 @@ def render(conn, user, login, isAdmin=False):
                                 valid_rows = edited_df.dropna(how="all")
                                 valid_rows = valid_rows[pd.to_numeric(valid_rows["Hours"], errors="coerce").notna()]
                                 setAllocationsMade(conn, schedule_id, len(valid_rows) > 0)
-                                st.success("✅ Saved successfully!")  
+                                st.success("✅ Saved successfully!")
+
+                            if has_records and btn_col2.button("Clear All Records", key=f"clear_{schedule_id}"):
+                                existing_ids = set(allocations_df["ID"].dropna().astype(int))
+                                for rid in existing_ids:
+                                    deleteRecord(conn, int(rid))
+                                setAllocationsMade(conn, schedule_id, False)
+                                st.rerun()  
                             
