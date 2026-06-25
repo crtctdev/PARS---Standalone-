@@ -208,6 +208,7 @@ def render(conn, user, login, isAdmin=False):
                             if not hours_match:
                                 st.error("Allocated Hours Must Equate To Total Hours")
 
+                            st.warning("⚠️ **IMPORTANT:** Make sure you hit Save after any changes to allocations.")
                             btn_col1, btn_col2 = st.columns([1, 1])
 
                             if hours_match and btn_col1.button("💾 Save Allocations", key=f"save_{schedule_id}"):
