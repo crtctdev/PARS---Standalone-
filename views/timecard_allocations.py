@@ -112,17 +112,12 @@ def render(conn, user, login, isAdmin=False):
                 pointer-events: none;
             }
             .fund-tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
-            </style>
+</style>
             """, unsafe_allow_html=True)
 
             st.divider()
 
             task_options = getTasks(conn)
-
-            schedule_ids = timecard_df["ScheduleID"].tolist()
-            placeholders = ','.join(['?' for _ in schedule_ids])
-            allocated_df = run_query(conn, f"SELECT DISTINCT ScheduleID FROM dbo.Record WHERE ScheduleID IN ({placeholders}) AND Task IS NOT NULL AND Fund IS NOT NULL", schedule_ids)
-            allocated_ids = set(allocated_df["ScheduleID"].tolist()) if allocated_df is not None and not allocated_df.empty else set()
 
             for _, row in timecard_df.iterrows():
 
@@ -131,7 +126,7 @@ def render(conn, user, login, isAdmin=False):
                 if key not in st.session_state:
                     st.session_state[key] = False
 
-                has_records = schedule_id in allocated_ids
+                has_records = bool(row["AllocationsMade"]) if pd.notna(row["AllocationsMade"]) else False
                 total_hours = float(row["TotalHours"])
 
                 breakdown_html = ""
@@ -151,8 +146,7 @@ def render(conn, user, login, isAdmin=False):
                 col2.write(row["Date"])
                 col3.write(row["PayType"])
                 col4.write(row["TotalHours"])
-                check_html = f'<div style="text-align:center; padding-top:4px;"><input type="checkbox" {"checked" if has_records else ""} disabled style="width:16px; height:16px; accent-color:#3b82f6; cursor:default;"></div>'
-                col5.markdown(check_html, unsafe_allow_html=True)
+                col5.markdown(f"<div style='text-align:center'>{'✅' if has_records else '⬜'}</div>", unsafe_allow_html=True)
                 col6.markdown(breakdown_html, unsafe_allow_html=True)
                 st.markdown("---")
                 if st.session_state[key]:
@@ -207,6 +201,7 @@ def render(conn, user, login, isAdmin=False):
                                         auto_rows.append({"ID": float("nan"), "Task": auto_task, "Fund": fund_option, "Hours": hours})
                                     auto_df = pd.DataFrame(auto_rows, columns=["ID", "Task", "Fund", "Hours"])
                                     saveAllocations(conn, schedule_id, auto_df)
+                                    setAllocationsMade(conn, schedule_id, True)
                                     st.success("✅ Auto-allocated successfully!")
                                     st.rerun()
 
@@ -225,5 +220,8 @@ def render(conn, user, login, isAdmin=False):
                                     deleteRecord(conn, int(deleted_id))
 
                                 saveAllocations(conn, schedule_id, edited_df)
+                                valid_rows = edited_df.dropna(how="all")
+                                valid_rows = valid_rows[pd.to_numeric(valid_rows["Hours"], errors="coerce").notna()]
+                                setAllocationsMade(conn, schedule_id, len(valid_rows) > 0)
                                 st.success("✅ Saved successfully!")  
                             

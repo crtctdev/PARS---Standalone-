@@ -404,7 +404,7 @@ def getSchedule(conn, EmployeeCode, PayPeriod):
     period = f"{parts[2]}{parts[0]}{parts[1]}"
     return run_query(conn, """
         SELECT S.ScheduleID, S.EmployeeCode, S.Date, S.PayType,
-               S.TotalHours, S.Percentage, T.PayPeriod
+               S.TotalHours, S.Percentage, T.PayPeriod, S.AllocationsMade
         FROM Schedule AS S
         LEFT JOIN Time_Card AS T ON T.TimeCardID = S.TimeCardID
         WHERE S.EmployeeCode = ? AND T.PayPeriod = ? Order By S.Date ASC
@@ -569,6 +569,10 @@ def saveAllocations(conn, schedule_id, edited_df):
             """, [str(row["Task"]), str(row["Fund"]), float(pct), str(schedule_id), int(row["ID"])])
 
     return edited_df
+
+
+def setAllocationsMade(conn, schedule_id, made: bool):
+    run_query(conn, "UPDATE dbo.Schedule SET AllocationsMade = ? WHERE ScheduleID = ?", [1 if made else 0, schedule_id])
 
 
 def saveNote(conn, employee_code, note_date, edited_df):
