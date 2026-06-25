@@ -7,7 +7,10 @@ from streamlit_calendar import calendar as st_calendar
 from Controllers.DB import *
 from login import get_auth_url, exchange_code_for_token, render_report, check_pars_group_membership
 from Classes import *
-from views import timecard_allocations, approval_report_manager, time_card_report
+try:
+    from views import timecard_allocations, approval_report_manager
+except KeyError:
+    st.rerun()
 from Controllers.timecardAllocationController import *
 from History.importHistoryController import logImport, getImportHistory
 
