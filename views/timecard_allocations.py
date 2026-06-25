@@ -166,9 +166,7 @@ def render(conn, user, login, isAdmin=False):
 
                         is_regular = row["PayType"] == "Regular"
 
-                        if not is_regular:
-                            st.info(f"Editing is disabled for Pay Type: **{row['PayType']}**")
-
+                        # TODO: non-Regular rows made editable per request — revisit if this should be restricted again
                         edited_df = st.data_editor(
                             editor_df,
                             column_order=["Task", "Fund", "Hours"],
@@ -178,8 +176,8 @@ def render(conn, user, login, isAdmin=False):
                                 "Fund": st.column_config.SelectboxColumn("Fund", options=fund_options),
                                 "Hours": st.column_config.NumberColumn("Hours", format="%.2f"),
                             },
-                            num_rows="dynamic" if is_regular else "fixed",
-                            disabled=not is_regular,
+                            num_rows="dynamic",
+                            disabled=False,
                             key=f"alloc_{schedule_id}",
                         )
 
@@ -190,7 +188,7 @@ def render(conn, user, login, isAdmin=False):
 
                         st.write(f"**Total Allocation: {total:.2f}**")
 
-                        if is_regular:
+                        if True:  # TODO: was `if is_regular:` — opened to all pay types
                             if not has_records and fund_allocations:
                                 if st.button("Auto Allocate", key=f"auto_{schedule_id}"):
                                     auto_task = next((t for t in task_options if t.startswith("O:")), task_options[0] if task_options else "")
