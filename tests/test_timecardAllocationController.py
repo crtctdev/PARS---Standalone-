@@ -165,6 +165,91 @@ class TestGetFundsByEmployee:
         assert "nan" not in result[0].lower()
 
 
+# ── getSchedule ───────────────────────────────────────────────────────────────
+
+class TestGetSchedule:
+    def test_converts_mmddyyyy_to_yyyymmdd(self):
+        """MM/DD/YYYY pay period from the UI must be converted to YYYYMMDD before the query."""
+        from Controllers.timecardAllocationController import getSchedule
+        with patch(PATCH, return_value=empty_df()) as mock_rq:
+            getSchedule(make_conn(), "EMP001", "04/30/2025")
+        params = mock_rq.call_args[0][2]
+        assert params[1] == "20250430"
+
+    def test_passes_employee_code(self):
+        """EmployeeCode must be forwarded as the first query parameter."""
+        from Controllers.timecardAllocationController import getSchedule
+        with patch(PATCH, return_value=empty_df()) as mock_rq:
+            getSchedule(make_conn(), "EMP001", "04/30/2025")
+        params = mock_rq.call_args[0][2]
+        assert params[0] == "EMP001"
+
+    def test_query_selects_allocations_made(self):
+        """AllocationsMade must be included in the SELECT so the view can read the checkbox state."""
+        from Controllers.timecardAllocationController import getSchedule
+        with patch(PATCH, return_value=empty_df()) as mock_rq:
+            getSchedule(make_conn(), "EMP001", "04/30/2025")
+        query = mock_rq.call_args[0][1]
+        assert "AllocationsMade" in query
+
+
+# ── getRecords ────────────────────────────────────────────────────────────────
+
+class TestGetRecords:
+    def test_passes_schedule_id(self):
+        """ScheduleID must be forwarded as the sole query parameter."""
+        from Controllers.timecardAllocationController import getRecords
+        with patch(PATCH, return_value=empty_df()) as mock_rq:
+            getRecords(make_conn(), "SCH001")
+        params = mock_rq.call_args[0][2]
+        assert params == ["SCH001"]
+
+    def test_returns_query_result(self):
+        """getRecords should pass through whatever run_query returns."""
+        from Controllers.timecardAllocationController import getRecords
+        expected = pd.DataFrame({"Task": ["T1"], "Fund": ["F1"], "Hours": [4.0], "ID": [1]})
+        with patch(PATCH, return_value=expected):
+            result = getRecords(make_conn(), "SCH001")
+        assert result is expected
+
+
+# ── setAllocationsMade ────────────────────────────────────────────────────────
+
+class TestSetAllocationsMade:
+    def test_sets_bit_to_1_when_true(self):
+        """Passing made=True must send 1 as the first parameter to the UPDATE."""
+        from Controllers.timecardAllocationController import setAllocationsMade
+        with patch(PATCH) as mock_rq:
+            setAllocationsMade(make_conn(), "SCH001", True)
+        params = mock_rq.call_args[0][2]
+        assert params[0] == 1
+
+    def test_sets_bit_to_0_when_false(self):
+        """Passing made=False must send 0 as the first parameter to the UPDATE."""
+        from Controllers.timecardAllocationController import setAllocationsMade
+        with patch(PATCH) as mock_rq:
+            setAllocationsMade(make_conn(), "SCH001", False)
+        params = mock_rq.call_args[0][2]
+        assert params[0] == 0
+
+    def test_passes_schedule_id(self):
+        """ScheduleID must be forwarded as the second UPDATE parameter."""
+        from Controllers.timecardAllocationController import setAllocationsMade
+        with patch(PATCH) as mock_rq:
+            setAllocationsMade(make_conn(), "SCH_XYZ", True)
+        params = mock_rq.call_args[0][2]
+        assert params[1] == "SCH_XYZ"
+
+    def test_query_targets_schedule_table(self):
+        """The UPDATE must target dbo.Schedule and set AllocationsMade."""
+        from Controllers.timecardAllocationController import setAllocationsMade
+        with patch(PATCH) as mock_rq:
+            setAllocationsMade(make_conn(), "SCH001", True)
+        query = mock_rq.call_args[0][1]
+        assert "Schedule" in query
+        assert "AllocationsMade" in query
+
+
 # ── deleteRecord ──────────────────────────────────────────────────────────────
 
 class TestDeleteRecord:

@@ -221,7 +221,7 @@ def render(conn, user, login, isAdmin=False):
                                 valid_rows = edited_df.dropna(how="all")
                                 valid_rows = valid_rows[pd.to_numeric(valid_rows["Hours"], errors="coerce").notna()]
                                 setAllocationsMade(conn, schedule_id, len(valid_rows) > 0)
-                                st.success("✅ Saved successfully!")
+                                st.rerun()
 
                             if has_records and btn_col2.button("Clear All Records", key=f"clear_{schedule_id}"):
                                 existing_ids = set(allocations_df["ID"].dropna().astype(int))
