@@ -1,5 +1,7 @@
 # PARS — Payroll Allocation Recording System
 
+[![CI](https://github.com/crtctdev/PARS---Standalone-/actions/workflows/ci.yml/badge.svg)](https://github.com/crtctdev/PARS---Standalone-/actions/workflows/ci.yml)
+
 PARS is an internal Streamlit web application used by CRT to manage, allocate, and approve employee timecards each pay period. Employees acknowledge their own timecards, managers approve them, and admins import payroll data and export allocation reports.
 
 ---
