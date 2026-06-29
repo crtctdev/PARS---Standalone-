@@ -22,3 +22,36 @@ jobs:
 
       - name: Run tests
         run: pytest tests/ -v
+
+      - name: Notify on success
+        if: success()
+        shell: python
+        run: |
+          import msal, requests, os
+
+          app = msal.ConfidentialClientApplication(
+              os.environ["AZURE_CLIENT_ID"],
+              authority=f"https://login.microsoftonline.com/{os.environ['AZURE_TENANT_ID']}",
+              client_credential=os.environ["AZURE_CLIENT_SECRET"],
+          )
+          result = app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
+          token = result["access_token"]
+
+          requests.post(
+              "https://graph.microsoft.com/v1.0/users/automation@crtct.org/sendMail",
+              headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+              json={
+                  "message": {
+                      "subject": "PARS CI passed",
+                      "body": {
+                          "contentType": "HTML",
+                          "content": "<p>All tests passed on the <strong>Main</strong> branch.</p>"
+                      },
+                      "toRecipients": [{"emailAddress": {"address": "automation@crtct.org"}}]
+                  }
+              }
+          )
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
