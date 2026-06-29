@@ -13,6 +13,7 @@ except KeyError:
     st.rerun()
 from Controllers.timecardAllocationController import *
 from History.importHistoryController import logImport, getImportHistory
+from Jobs.notify_employees_on_import import notify_employees_on_import
 
 
 # ── Page config (must be first) ───────────────────────────────────────────────
@@ -55,7 +56,7 @@ if st.session_state.user is None:
             st.session_state.user = {
                 "name": claims.get("name"),
                 #Throw in here to spoof as other people claims.get("preferred_username")
-                "email":claims.get("preferred_username") ,
+                "email":claims.get("preferred_username"),
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()
@@ -424,8 +425,10 @@ with sidebar_col:
                     st.session_state.import_message = ("error", f"Upload rejected: all {len(existing)} records already exist for this pay period.")
                 elif existing:
                     st.session_state.import_message = ("warning", f"Imported {added} records. {len(existing)} already existed and were skipped.{auto_msg}")
+                    notify_employees_on_import(conn, pay_period)
                 else:
                     st.session_state.import_message = ("success", f"Successfully imported {added} records.{auto_msg}")
+                    notify_employees_on_import(conn, pay_period)
 
                 st.rerun()
 
