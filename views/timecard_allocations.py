@@ -55,11 +55,27 @@ def render(conn, user, login, isAdmin=False):
         st.session_state.prev_approval = approved
         st.session_state.prev_acknowledged = acknowledged
 
+    timecard_df = getSchedule(conn, employee_name.employee_code, pay_period)
+    fund_options = getFundsByEmployee(conn, employee_name.work_email)
+    fund_allocations = getFundAllocations(conn, employee_name.work_email)
+
+    all_allocated = (
+        timecard_df is not None
+        and not timecard_df.empty
+        and bool(timecard_df["AllocationsMade"].fillna(0).astype(bool).all())
+    )
+
     with ctrl3:
         approvalCheckbox = st.checkbox("Manager Approval", value=approved, disabled=not isManager)
 
     with ctrl4:
-        acknowledgedCheckbox = st.checkbox("Employee Acknowledgement", value=acknowledged)
+        ack_help = "All schedule rows must have allocations made before acknowledging." if not all_allocated else None
+        acknowledgedCheckbox = st.checkbox(
+            "Employee Acknowledgement",
+            value=acknowledged,
+            disabled=not all_allocated and not acknowledged,
+            help=ack_help,
+        )
 
     # Only fires if the checkbox was actually toggled
     if approvalCheckbox != st.session_state.prev_approval:
@@ -80,10 +96,6 @@ def render(conn, user, login, isAdmin=False):
     with status_col:
         if approved: st.success("✅ Time Card Has Been Approved")
     # Time Card Table
-    if employee_name is not None:
-        timecard_df = getSchedule(conn, employee_name.employee_code, pay_period)
-        fund_options = getFundsByEmployee(conn, employee_name.work_email)
-        fund_allocations = getFundAllocations(conn, employee_name.work_email)
     if timecard_df.empty:
         st.caption("No records to display.")
     else:
