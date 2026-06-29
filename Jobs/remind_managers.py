@@ -9,12 +9,14 @@ from datetime import datetime
 #Run Once A week 
 
 
-_secrets_path = os.path.join(os.path.dirname(__file__), "..", ".streamlit", "secrets.toml")
-_secrets      = toml.load(_secrets_path)
-
-CLIENT_ID     = _secrets["AZURE_CLIENT_ID"]
-CLIENT_SECRET = _secrets["AZURE_CLIENT_SECRET"]
-TENANT_ID     = _secrets["AZURE_TENANT_ID"]
+try:
+    _secrets_path = os.path.join(os.path.dirname(__file__), "..", ".streamlit", "secrets.toml")
+    _secrets      = toml.load(_secrets_path)
+    CLIENT_ID     = _secrets["AZURE_CLIENT_ID"]
+    CLIENT_SECRET = _secrets["AZURE_CLIENT_SECRET"]
+    TENANT_ID     = _secrets["AZURE_TENANT_ID"]
+except (FileNotFoundError, KeyError):
+    CLIENT_ID = CLIENT_SECRET = TENANT_ID = ""
 SENDER_EMAIL  = "automation@crtct.org"
 PARS_URL      = "https://apps.crtct.org:8056/"
 
