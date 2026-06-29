@@ -17,8 +17,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install test dependencies
+        run: pip install pandas numpy pytest pyodbc msal requests toml
 
       - name: Run tests
         run: pytest tests/ -v
