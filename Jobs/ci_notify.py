@@ -1,6 +1,10 @@
 import os
 from Jobs.notify_manager_on_acknowledge import _get_graph_token, _send_email
 
+if not all([os.environ.get("AZURE_CLIENT_ID"), os.environ.get("AZURE_CLIENT_SECRET"), os.environ.get("AZURE_TENANT_ID")]):
+    print("Skipping CI notification — Azure secrets not configured.")
+    raise SystemExit(0)
+
 status = os.environ.get("CI_STATUS", "unknown")
 passed = status == "success"
 
