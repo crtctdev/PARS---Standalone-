@@ -226,19 +226,20 @@ def render(conn, user, login, isAdmin=False):
                                 edited_ids = set(edited_df["ID"].dropna().astype(int))
                                 deleted_ids = original_ids - edited_ids
 
-                                for deleted_id in deleted_ids:
-                                    deleteRecord(conn, int(deleted_id))
-
-                                saveAllocations(conn, schedule_id, edited_df)
-                                valid_rows = edited_df.dropna(how="all")
-                                valid_rows = valid_rows[pd.to_numeric(valid_rows["Hours"], errors="coerce").notna()]
-                                setAllocationsMade(conn, schedule_id, len(valid_rows) > 0)
+                                with transaction(conn):
+                                    for deleted_id in deleted_ids:
+                                        deleteRecord(conn, int(deleted_id))
+                                    saveAllocations(conn, schedule_id, edited_df)
+                                    valid_rows = edited_df.dropna(how="all")
+                                    valid_rows = valid_rows[pd.to_numeric(valid_rows["Hours"], errors="coerce").notna()]
+                                    setAllocationsMade(conn, schedule_id, len(valid_rows) > 0)
                                 st.rerun()
 
                             if has_records and btn_col2.button("Clear All Records", key=f"clear_{schedule_id}"):
                                 existing_ids = set(allocations_df["ID"].dropna().astype(int))
-                                for rid in existing_ids:
-                                    deleteRecord(conn, int(rid))
-                                setAllocationsMade(conn, schedule_id, False)
+                                with transaction(conn):
+                                    for rid in existing_ids:
+                                        deleteRecord(conn, int(rid))
+                                    setAllocationsMade(conn, schedule_id, False)
                                 st.rerun()  
                             

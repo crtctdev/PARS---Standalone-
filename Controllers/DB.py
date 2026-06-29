@@ -1,6 +1,34 @@
 import pandas as pd
 import pyodbc
+from contextlib import contextmanager
 from Classes.Employee import *
+
+
+@contextmanager
+def transaction(conn):
+    """
+    Wraps multiple run_query calls in a single atomic transaction.
+
+    Suppresses the per-call conn.commit() inside run_query so that all writes
+    are held until the block exits cleanly, then committed together. If any
+    exception is raised inside the block the entire transaction is rolled back.
+
+    Usage:
+        with transaction(conn):
+            deleteRecord(conn, rid)
+            saveAllocations(conn, schedule_id, df)
+            setAllocationsMade(conn, schedule_id, True)
+    """
+    original_commit = conn.commit
+    conn.commit = lambda: None
+    try:
+        yield conn
+        original_commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.commit = original_commit
 
 
 def get_connection():
