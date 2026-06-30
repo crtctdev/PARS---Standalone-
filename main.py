@@ -481,8 +481,9 @@ with main_col:
                 st.error("Access denied.")
                 st.stop()
             managing_dept = login[0].managing_department
+            
             dept_code = login[0].dept_code
-            render_report(f"Invoked_x0020_function/DepartmentCode eq '{managing_dept}'")
+            render_report(f"Invoked_x0020_function/DepartmentCode eq '{dept_code}'")
         
 
 # ── Sidebar resize handle ─────────────────────────────────────────────────────
