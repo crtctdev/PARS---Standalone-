@@ -56,7 +56,7 @@ if st.session_state.user is None:
             st.session_state.user = {
                 "name": claims.get("name"),
                 #Throw in here to spoof as other people claims.get("preferred_username")
-                "email":claims.get("preferred_username"),
+                "email":"rakhudum@crtct.org",
                 "oid": claims.get("oid"),
             }
             st.query_params.clear()
@@ -480,10 +480,10 @@ with main_col:
             if not isManager:
                 st.error("Access denied.")
                 st.stop()
-            managing_dept = login[0].managing_department
+            managing_dept = login[0].employee_code
             
             dept_code = login[0].dept_code
-            render_report(f"Invoked_x0020_function/DepartmentCode eq '{dept_code}'")
+            render_report(f"Invoked_x0020_function/ManagerEECode eq '{managing_dept}'")
         
 
 # ── Sidebar resize handle ─────────────────────────────────────────────────────
